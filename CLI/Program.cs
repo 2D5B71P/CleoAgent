@@ -95,7 +95,8 @@ namespace CleoAgent.CLI
                 summarizeEvery: config.Agent.SummarizeEvery,
                 reflection: reflection,
                 reflectAfter: 12,
-                repository: memory);
+                repository: memory,
+                planning: config.Planning);
 
             // -----------------------------
             for (; ;)
@@ -131,6 +132,24 @@ namespace CleoAgent.CLI
 							Console.ForegroundColor = ConsoleColor.Gray;
                             Console.WriteLine($"[tool {tool.ToolName}]");
                             Console.WriteLine($"● {tool.ToolDescription}");
+							Console.ForegroundColor = ConsoleColor.White;
+                            break;
+
+                        case AgentPlanEvent plan:
+                            Console.WriteLine();
+							Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.WriteLine($"[plan] {plan.Goal}");
+                            foreach (var step in plan.Steps)
+                            {
+                                Console.WriteLine($"  {step.Id}. {step.Summary}");
+                            }
+							Console.ForegroundColor = ConsoleColor.White;
+                            break;
+
+                        case AgentReplanned replan:
+                            Console.WriteLine();
+							Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"[replan] {replan.Reason}");
 							Console.ForegroundColor = ConsoleColor.White;
                             break;
 

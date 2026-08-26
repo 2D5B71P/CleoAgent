@@ -44,17 +44,36 @@ internal sealed record CompactionConfig(
     public static CompactionConfig Default => new(20, 16_000, 64_000);
 }
 
+// Deliberate planning policy. When enabled, each user turn is handled as
+// plan -> act/observe -> (re-plan) instead of a purely reactive tool loop.
+// Guards keep the agent from trivially or endlessly changing approach:
+//   - maxPlanSteps          hard cap on the number of steps in a plan
+//   - maxToolCallsPerStep   hard cap on tool executions within one step
+//   - replanOnToolError     re-plan deterministically when a tool errors
+//   - maxReplans            hard budget for model-signal replans per turn
+internal sealed record PlanningConfig(
+    bool Enabled,
+    int MaxPlanSteps,
+    int MaxToolCallsPerStep,
+    bool ReplanOnToolError,
+    int MaxReplans)
+{
+    public static PlanningConfig Default => new(false, 6, 8, true, 2);
+}
+
 internal sealed record AppConfig(
     AgentConfig Agent,
     ModelConfig Model,
     EmbeddingConfig Embedding,
-    CompactionConfig Compaction)
+    CompactionConfig Compaction,
+    PlanningConfig Planning)
 {
     public static AppConfig Default => new(
         AgentConfig.Default,
         ModelConfig.Default,
         EmbeddingConfig.Default,
-        CompactionConfig.Default);
+        CompactionConfig.Default,
+        PlanningConfig.Default);
 }
 
 internal static class Config
@@ -153,6 +172,30 @@ internal static class Config
                     compactionConfig = compactionConfig with { HardByteCeiling = Math.Max(1, hb.GetInt32()) };
 
                 result = result with { Compaction = compactionConfig };
+            }
+
+            if (TrySection(root, "planning", out JsonElement planning))
+            {
+                var planningConfig = result.Planning;
+
+                if (planning.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True)
+                    planningConfig = planningConfig with { Enabled = true };
+                if (planning.TryGetProperty("enabled", out en) && en.ValueKind == JsonValueKind.False)
+                    planningConfig = planningConfig with { Enabled = false };
+
+                if (planning.TryGetProperty("maxPlanSteps", out JsonElement ps) && ps.ValueKind == JsonValueKind.Number)
+                    planningConfig = planningConfig with { MaxPlanSteps = Math.Max(1, ps.GetInt32()) };
+
+                if (planning.TryGetProperty("maxToolCallsPerStep", out JsonElement mt) && mt.ValueKind == JsonValueKind.Number)
+                    planningConfig = planningConfig with { MaxToolCallsPerStep = Math.Max(1, mt.GetInt32()) };
+
+                if (planning.TryGetProperty("replanOnToolError", out JsonElement roe) && roe.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    planningConfig = planningConfig with { ReplanOnToolError = roe.GetBoolean() };
+
+                if (planning.TryGetProperty("maxReplans", out JsonElement mr) && mr.ValueKind == JsonValueKind.Number)
+                    planningConfig = planningConfig with { MaxReplans = Math.Max(0, mr.GetInt32()) };
+
+                result = result with { Planning = planningConfig };
             }
         }
         catch (JsonException)

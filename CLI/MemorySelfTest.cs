@@ -91,6 +91,9 @@ internal static class MemorySelfTest
         Console.WriteLine("\n-- Session store (disk-backed JSONL round-trip) --");
         await TestSessionStoreAsync();
 
+        Console.WriteLine("\n-- Planner (structured plan + replan) --");
+        await TestPlannerAsync();
+
         Console.WriteLine("\n=== Self-test complete ===");
     }
 
@@ -132,6 +135,56 @@ internal static class MemorySelfTest
 
         try { System.IO.Directory.Delete(scratchRoot, recursive: true); }
         catch { /* best-effort */ }
+    }
+
+    // Verifies the structured planner: create-plan parses JSON to steps, and
+    // replan keeps the goal. Uses an offline fake provider.
+    private static async Task TestPlannerAsync()
+    {
+        var fake = new FakeProviderModel("""
+        {
+          "goal": "Fix the failing build",
+          "steps": [
+            { "id": 1, "summary": "Reproduce the failure", "expects": "an error message" },
+            { "id": 2, "summary": "Inspect the failing module" },
+            { "id": 3, "summary": "Apply a fix and re-run" }
+          ]
+        }
+        """);
+
+        var planner = new CleoAgent.Core.Agent.Planner(fake, "agentA");
+        var plan = await planner.CreatePlanAsync("the build fails", maxSteps: 6, default);
+
+        bool ok = plan is not null
+            && plan.Goal == "Fix the failing build"
+            && plan.Steps.Count == 3
+            && plan.Steps[0].Summary.Contains("Reproduce", StringComparison.Ordinal)
+            && plan.Steps[2].Expects is null;
+
+        Console.WriteLine(ok
+            ? "  OK: CreatePlanAsync parsed goal + steps, optional expects handled."
+            : $"  FAIL: plan parsed incorrectly (goal={plan?.Goal}, steps={plan?.Steps.Count}).");
+
+        // Replan: fake returns a revised plan with same goal.
+        var fake2 = new FakeProviderModel("""
+        {
+          "goal": "Fix the failing build",
+          "steps": [
+            { "id": 1, "summary": "Re-run tests to confirm" },
+            { "id": 2, "summary": "Inspect the logs" }
+          ]
+        }
+        """);
+        var planner2 = new CleoAgent.Core.Agent.Planner(fake2, "agentA");
+        var revised = await planner2.ReplanAsync(plan!, "tool errored: x", maxSteps: 6, default);
+
+        bool replanOk = revised is not null
+            && revised.Goal == "Fix the failing build"
+            && revised.Steps.Count == 2;
+
+        Console.WriteLine(replanOk
+            ? "  OK: ReplanAsync kept goal + replaced steps."
+            : $"  FAIL: replan bad (goal={revised?.Goal}, steps={revised?.Steps.Count}).");
     }
 
     // Minimal IModelProvider that returns a fixed text reply via CompleteAsync.
@@ -213,6 +266,13 @@ internal static class MemorySelfTest
             "keepRecentTurns": 20,
             "softTokenCeiling": 16000,
             "hardByteCeiling": 64000
+          },
+          "planning": {
+            "enabled": true,
+            "maxPlanSteps": 6,
+            "maxToolCallsPerStep": 8,
+            "replanOnToolError": true,
+            "maxReplans": 2
           }
         }
         """);
@@ -237,7 +297,10 @@ internal static class MemorySelfTest
                       && cfg.Embedding.Provider == "none"
                       && cfg.Compaction.KeepRecentTurns == 20
                       && cfg.Compaction.SoftTokenCeiling == 16000
-                      && cfg.Compaction.HardByteCeiling == 64000;
+                      && cfg.Compaction.HardByteCeiling == 64000
+                      && cfg.Planning.Enabled
+                      && cfg.Planning.MaxPlanSteps == 6
+                      && cfg.Planning.MaxReplans == 2;
 
             Console.WriteLine(ok
                 ? "  OK: comments stripped, ${VAR} interpolated, values parsed."

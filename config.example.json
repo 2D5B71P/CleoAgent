@@ -26,5 +26,16 @@
     "provider": "none",
     "model": "",
     "api_key": ""
+  },
+
+  // Deliberate planning loop. When enabled, each user turn becomes:
+  // plan -> act/observe -> (re-plan on tool error or model signal). Budgets
+  // prevent trivial/endless re-planning.
+  "planning": {
+    "enabled": false,
+    "maxPlanSteps": 6,
+    "maxToolCallsPerStep": 8,
+    "replanOnToolError": true,
+    "maxReplans": 2
   }
 }
