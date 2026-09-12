@@ -25,14 +25,23 @@ namespace CleoAgent.CLI
         {
             Console.OutputEncoding = Encoding.UTF8;
 
-            using var cts = new CancellationTokenSource();
+            // One-shot cancellation source per turn. Tokens cannot be reset, so a
+            // fresh source is created for each prompt; the Ctrl+C handler always
+            // targets the LIVE source through this holder (registered once).
+            var cancelControl = new TurnCancelControl();
             Console.CancelKeyPress += (_, eventArgs) =>
             {
-                if (cts is { IsCancellationRequested: false })
+                // First Ctrl+C during a turn: cooperative interrupt - swallow the
+                // signal and cancel the turn's token. The turn ends, the REPL
+                // re-prompts, and text already streamed stays visible.
+                if (cancelControl.InFlight
+                    && cancelControl.Source is { IsCancellationRequested: false })
                 {
                     eventArgs.Cancel = true;
-                    cts.Cancel();
+                    cancelControl.Source.Cancel();
                 }
+                // Idle at the prompt, or the turn is already canceled (second
+                // Ctrl+C): leave Cancel untouched so the OS default applies (exit).
             };
             
             EnvLoader.Load();
@@ -130,6 +139,8 @@ namespace CleoAgent.CLI
             // -----------------------------
             for (; ;)
             {
+                cancelControl.Source = new CancellationTokenSource();
+
                 Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.Write("> ");
                 Console.ForegroundColor = ConsoleColor.Yellow;
@@ -148,49 +159,69 @@ namespace CleoAgent.CLI
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine();
 
-                await foreach (AgentEvent evt in agent.RunAsync(input, cts.Token))
+                cancelControl.InFlight = true;
+                try
                 {
-                    switch (evt)
+                    await foreach (AgentEvent evt in agent.RunAsync(input, cancelControl.Source.Token))
                     {
-                        case AgentTextDelta text:
-                            Console.Write(text.Text);
-                            break;
+                        switch (evt)
+                        {
+                            case AgentTextDelta text:
+                                Console.Write(text.Text);
+                                break;
 
-                        case AgentToolStarted tool:
-                            Console.WriteLine();
-							Console.ForegroundColor = ConsoleColor.Gray;
-                            Console.WriteLine($"[tool {tool.ToolName}]");
-                            Console.WriteLine($"● {tool.ToolDescription}");
-							Console.ForegroundColor = ConsoleColor.White;
-                            break;
+                            case AgentToolStarted tool:
+                                Console.WriteLine();
+								Console.ForegroundColor = ConsoleColor.Gray;
+                                Console.WriteLine($"[tool {tool.ToolName}]");
+                                Console.WriteLine($"● {tool.ToolDescription}");
+								Console.ForegroundColor = ConsoleColor.White;
+                                break;
 
-                        case AgentPlanEvent plan:
-                            Console.WriteLine();
-							Console.ForegroundColor = ConsoleColor.Cyan;
-                            Console.WriteLine($"[plan] {plan.Goal}");
-                            foreach (var step in plan.Steps)
-                            {
-                                Console.WriteLine($"  {step.Id}. {step.Summary}");
-                            }
-							Console.ForegroundColor = ConsoleColor.White;
-                            break;
+                            case AgentPlanEvent plan:
+                                Console.WriteLine();
+								Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine($"[plan] {plan.Goal}");
+                                foreach (var step in plan.Steps)
+                                {
+                                    Console.WriteLine($"  {step.Id}. {step.Summary}");
+                                }
+								Console.ForegroundColor = ConsoleColor.White;
+                                break;
 
-                        case AgentReplanned replan:
-                            Console.WriteLine();
-							Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.WriteLine($"[replan] {replan.Reason}");
-							Console.ForegroundColor = ConsoleColor.White;
-                            break;
+                            case AgentReplanned replan:
+                                Console.WriteLine();
+								Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.WriteLine($"[replan] {replan.Reason}");
+								Console.ForegroundColor = ConsoleColor.White;
+                                break;
 
-                        case AgentToolCompleted tool:
-                            if (tool.IsError)
-                                Console.WriteLine("[+ tool error]");
-                            break;
+                            case AgentToolCompleted tool:
+                                if (tool.IsError)
+                                    Console.WriteLine("[+ tool error]");
+                                break;
 
-                        case AgentError error:
-                            Console.Error.WriteLine(error.Message);
-                            break;
+                            case AgentError error:
+                                Console.Error.WriteLine(error.Message);
+                                break;
+                        }
                     }
+                }
+                catch (System.OperationCanceledException)
+                {
+                    // Ctrl+C surfaced through the cancellation token (socket reads,
+                    // tool execution, context rendering, ThrowIfCancellationRequested);
+                    // the turn is over either way - fall through and report.
+                }
+                finally
+                {
+                    cancelControl.InFlight = false;
+                }
+
+                if (cancelControl.Source.IsCancellationRequested)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("[interrupted]");
                 }
 
                 Console.WriteLine();
@@ -202,5 +233,14 @@ namespace CleoAgent.CLI
 
             // -----------------------------
         }
+    }
+
+    // Mutable holder for the current turn's cancellation source so the Ctrl+C
+    // handler (registered once) can always cancel the LIVE token. A fresh
+    // source is created per prompt because cancellation tokens are one-shot.
+    internal sealed class TurnCancelControl
+    {
+        public CancellationTokenSource? Source;
+        public bool InFlight;
     }
 }
