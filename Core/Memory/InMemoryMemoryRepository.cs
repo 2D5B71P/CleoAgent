@@ -9,6 +9,7 @@ namespace CleoAgent.Core.Memory;
 // Volatile in-process repository. Real cosine-similarity retrieval is
 // implemented here so the memory pipeline is fully testable without any
 // external store. The file backend holds the same shape for persistence.
+// Single pool (no tier splitting) - mirrors FileMemoryRepository since 2026-09-12.
 internal sealed class InMemoryMemoryRepository : IMemoryRepository
 {
     private readonly List<MemoryDocument> _docs = new();
@@ -52,7 +53,6 @@ internal sealed class InMemoryMemoryRepository : IMemoryRepository
         lock (_gate)
         {
             var result = _docs
-                .Where(d => d.Tier == tier)
                 .OrderByDescending(d => d.CreatedAt)
                 .Take(limit)
                 .ToList();
@@ -65,21 +65,16 @@ internal sealed class InMemoryMemoryRepository : IMemoryRepository
         IReadOnlyList<float> queryEmbedding,
         int limit,
         IReadOnlyCollection<MemoryTier>? tiers = null,
+        float minSimilarity = 0.0f,
         CancellationToken cancellationToken = default)
     {
         lock (_gate)
         {
-            IEnumerable<MemoryDocument> source = _docs;
-
-            if (tiers is { Count: > 0 })
-            {
-                source = source.Where(d => tiers.Contains(d.Tier));
-            }
-
             // Cosine similarity (vectors are pre-normalized by providers that
             // guarantee it; compute dot product).
-            var result = source
+            var result = _docs
                 .Select(d => (Doc: d, Score: Cosine(d.Embedding, queryEmbedding)))
+                .Where(x => x.Score >= minSimilarity)
                 .OrderByDescending(x => x.Score)
                 .Take(limit)
                 .Select(x => x.Doc)

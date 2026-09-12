@@ -4,12 +4,8 @@
   "agent": {
     // Identifier for this agent. Memory and instructions are scoped to it:
     //   %APPDATA%\CleoAgent\agents\<id>\agent.md   (persona)
-    //   %APPDATA%\CleoAgent\agents\<id>\memory\    (short/long-term JSON)
-    "id": "Cleo",
-
-    // Every N user turns, distill the recent conversation into short-term
-    // memories (LLM Q/A extraction). 0/1 = every turn.
-    "summarizeEvery": 8
+    //   %APPDATA%\CleoAgent\agents\<id>\memory\   (memories.json)
+    "id": "Cleo"
   },
 
   "model": {

@@ -10,27 +10,31 @@ using CleoAgent.Core.Model.Embedding;
 
 namespace CleoAgent.Core.Memory;
 
-// Persistent per-agent memory store backed by two JSON files:
-//   <agentsRoot>\<agentId>\memory\short_term.json
-//   <agentsRoot>\<agentId>\memory\long_term.json
+// Persistent per-agent memory store backed by a single JSON file:
+//   <agentsRoot>\<agentId>\memory\memories.json
 // Embeddings are persisted so retrieval works correctly after a reload without
-// re-embedding. This is the non-Chroma backend; the interface keeps backend
-// swappable later.
+// re-embedding.
+//
+// NOTE (2026-09-12): tiers (short/long-term) are legacy from the old
+// summarizer/reflection design. Everything now lives in ONE pool - the agent
+// decides what to keep and forget via memory tools. MemoryTier is still on the
+// document (vestigial) and the tier args above are ignored; the old
+// short_term.json / long_term.json files from the summarizer era are left
+// untouched on disk and deliberately NOT loaded (clean slate).
 internal sealed class FileMemoryRepository : IMemoryRepository
 {
+    private static readonly string FileName = "memories.json";
+
     private readonly string _directory;
     private readonly IEmbeddingProvider _embedding;
 
-    private readonly Dictionary<MemoryTier, List<MemoryDocument>> _store = new();
+    private readonly List<MemoryDocument> _store = new();
     private readonly object _gate = new();
 
     public FileMemoryRepository(string agentsRoot, string agentId, IEmbeddingProvider embedding)
     {
         _directory = Path.Combine(agentsRoot, agentId, "memory");
         _embedding = embedding;
-
-        _store[MemoryTier.ShortTerm] = new List<MemoryDocument>();
-        _store[MemoryTier.LongTerm]  = new List<MemoryDocument>();
 
         Load();
     }
@@ -46,39 +50,35 @@ internal sealed class FileMemoryRepository : IMemoryRepository
 
         lock (_gate)
         {
-            var list = ListFor(doc.Tier);
-            int existing = list.FindIndex(d => d.Id == doc.Id);
+            int existing = _store.FindIndex(d => d.Id == doc.Id);
 
             if (existing >= 0)
-                list[existing] = doc;
+                _store[existing] = doc;
             else
-                list.Add(doc);
+                _store.Add(doc);
         }
 
-        await SaveAsync(doc.Tier, cancellationToken);
+        await SaveAsync(cancellationToken);
     }
 
     public Task DeleteAsync(string id, CancellationToken cancellationToken = default)
     {
-        MemoryTier? tier = null;
+        bool removed;
 
         lock (_gate)
         {
-            foreach (var key in _store.Keys.ToList())
+            int idx = _store.FindIndex(d => d.Id == id);
+            removed = idx >= 0;
+
+            if (removed)
             {
-                int idx = _store[key].FindIndex(d => d.Id == id);
-                if (idx >= 0)
-                {
-                    _store[key].RemoveAt(idx);
-                    tier = key;
-                    break;
-                }
+                _store.RemoveAt(idx);
             }
         }
 
-        return tier is null
-            ? Task.CompletedTask
-            : SaveAsync(tier.Value, cancellationToken);
+        return removed
+            ? SaveAsync(cancellationToken)
+            : Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<MemoryDocument>> GetRecentAsync(
@@ -88,7 +88,7 @@ internal sealed class FileMemoryRepository : IMemoryRepository
     {
         lock (_gate)
         {
-            var result = ListFor(tier)
+            var result = _store
                 .OrderByDescending(d => d.CreatedAt)
                 .Take(limit)
                 .ToList();
@@ -101,23 +101,15 @@ internal sealed class FileMemoryRepository : IMemoryRepository
         IReadOnlyList<float> queryEmbedding,
         int limit,
         IReadOnlyCollection<MemoryTier>? tiers = null,
+        float minSimilarity = 0.0f,
         CancellationToken cancellationToken = default)
     {
         lock (_gate)
         {
-            var source = new List<MemoryDocument>();
-
-            foreach (var pair in _store)
-            {
-                if (tiers is { Count: > 0 } && !tiers.Contains(pair.Key))
-                    continue;
-
-                source.AddRange(pair.Value);
-            }
-
-            var result = source
+            var result = _store
                 .Where(d => d.Embedding is { Count: > 0 })
                 .Select(d => (Doc: d, Score: Cosine(d.Embedding, queryEmbedding)))
+                .Where(x => x.Score >= minSimilarity)
                 .OrderByDescending(x => x.Score)
                 .Take(limit)
                 .Select(x => x.Doc)
@@ -127,20 +119,18 @@ internal sealed class FileMemoryRepository : IMemoryRepository
         }
     }
 
-    private List<MemoryDocument> ListFor(MemoryTier tier) => _store[tier];
-
-    private Task SaveAsync(MemoryTier tier, CancellationToken cancellationToken)
+    private Task SaveAsync(CancellationToken cancellationToken)
     {
         List<MemoryDocument> snapshot;
 
         lock (_gate)
         {
-            snapshot = ListFor(tier).ToList();
+            snapshot = _store.ToList();
         }
 
         Directory.CreateDirectory(_directory);
 
-        string path = Path.Combine(_directory, FileNameFor(tier));
+        string path = Path.Combine(_directory, FileName);
         string json = JsonSerializer.Serialize(snapshot, SerializerOptions);
 
         return File.WriteAllTextAsync(path, json, cancellationToken);
@@ -148,33 +138,27 @@ internal sealed class FileMemoryRepository : IMemoryRepository
 
     private void Load()
     {
-        foreach (MemoryTier tier in new[] { MemoryTier.ShortTerm, MemoryTier.LongTerm })
+        string path = Path.Combine(_directory, FileName);
+
+        if (!File.Exists(path))
+            return;
+
+        try
         {
-            string path = Path.Combine(_directory, FileNameFor(tier));
+            string json = File.ReadAllText(path);
 
-            if (!File.Exists(path))
-                continue;
+            var docs = JsonSerializer.Deserialize<List<MemoryDocument>>(json, SerializerOptions);
 
-            try
+            if (docs is not null)
             {
-                string json = File.ReadAllText(path);
-
-                var docs = JsonSerializer.Deserialize<List<MemoryDocument>>(json, SerializerOptions);
-
-                if (docs is not null)
-                {
-                    _store[tier] = docs.Where(d => d.Embedding is { Count: > 0 }).ToList();
-                }
-            }
-            catch (JsonException)
-            {
-                // Corrupt/absent file: start the tier empty.
+                _store.AddRange(docs.Where(d => d.Embedding is { Count: > 0 }));
             }
         }
+        catch (JsonException)
+        {
+            // Corrupt/absent file: start empty.
+        }
     }
-
-    private static string FileNameFor(MemoryTier tier) =>
-        tier == MemoryTier.ShortTerm ? "short_term.json" : "long_term.json";
 
     private static float Cosine(IReadOnlyList<float> a, IReadOnlyList<float> b)
     {

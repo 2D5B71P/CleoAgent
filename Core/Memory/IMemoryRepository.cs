@@ -22,10 +22,14 @@ internal interface IMemoryRepository
 
     // Retrieves up to `limit` documents across tiers whose embedding is nearest
     // to `queryEmbedding` (cosine similarity). `tiers` filters which pools are
-    // searched; empty means search all tiers.
+    // searched; empty means search all tiers. Results below `minSimilarity`
+    // (0..1) are excluded - the relevance floor for retrieval. (Tiers are a
+    // legacy concept: see FileMemoryRepository - everything now lives in one
+    // pool and the filter is a no-op.)
     Task<IReadOnlyList<MemoryDocument>> QueryAsync(
         IReadOnlyList<float> queryEmbedding,
         int limit,
         IReadOnlyCollection<MemoryTier>? tiers = null,
+        float minSimilarity = 0.0f,
         CancellationToken cancellationToken = default);
 }

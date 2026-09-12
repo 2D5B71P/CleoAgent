@@ -9,6 +9,10 @@ using CleoAgent.Core.Model.Embedding;
 
 namespace CleoAgent.Core.Context;
 
+// DEPRECATED (2026-09-12): automatic memory injection is gone (zero auto
+// injection by design). The agent drives its own memory through the memory_*
+// tools. Kept per the no-delete rule; no longer registered in Program.cs.
+//
 // Injects memories relevant to the current context, retrieved from the agent's
 // memory repository by embedding the current user prompt and doing a
 // top-k similarity search. This is the source that makes memory "remember"

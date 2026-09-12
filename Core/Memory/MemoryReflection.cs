@@ -10,6 +10,10 @@ using CleoAgent.Core.Model.Embedding;
 
 namespace CleoAgent.Core.Memory;
 
+// DEPRECATED (2026-09-12): superseded by agent-driven memory tools. The host no
+// longer consolidates memories automatically - the agent decides what to keep
+// and forget via memory_write/memory_forget. Kept per the no-delete rule.
+//
 // The memory consolidation path: reads recent short-term memories, asks the LLM
 // to synthesize the durable, high-level facts worth keeping long-term, embeds
 // them, and stores them as long-term memories. Short-term items are left in

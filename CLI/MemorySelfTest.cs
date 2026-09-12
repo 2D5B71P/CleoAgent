@@ -28,7 +28,7 @@ internal static class MemorySelfTest
         var repoA = new FileMemoryRepository(scratchRoot, "agentA", embedding);
         var repoB = new FileMemoryRepository(scratchRoot, "agentB", embedding);
 
-        // Store some memories in A.
+        // Store some memories in A (single pool - tiers are vestigial).
         await repoA.UpsertAsync(MemoryDocument.Create(
             MemoryTier.ShortTerm,
             "The user's login flow uses OAuth2 with PKCE.",
@@ -40,7 +40,7 @@ internal static class MemorySelfTest
             await embedding.EmbedAsync("build target net10.0 SDK")));
 
         await repoA.UpsertAsync(MemoryDocument.Create(
-            MemoryTier.LongTerm,
+            MemoryTier.ShortTerm,
             "Deployment is done via a GitHub Actions workflow to Azure.",
             await embedding.EmbedAsync("deployment GitHub Actions Azure")));
 
@@ -68,16 +68,17 @@ internal static class MemorySelfTest
         var repoA2 = new FileMemoryRepository(scratchRoot, "agentA", embedding);
         var recent = await repoA2.GetRecentAsync(MemoryTier.ShortTerm, limit: 10);
         Console.WriteLine($"\n-- Persistence round-trip --");
-        Console.WriteLine($"  Reloaded short-term count: {recent.Count} (expected 2)");
-        Console.WriteLine(recent.Count == 2 ? "  OK: persisted." : "  FAIL: persistence broken.");
+        Console.WriteLine($"  Reloaded memory count: {recent.Count} (expected 3)");
+        Console.WriteLine(recent.Count == 3 ? "  OK: persisted." : "  FAIL: persistence broken.");
 
         // Cleanup
         try { System.IO.Directory.Delete(scratchRoot, recursive: true); }
         catch { /* best-effort */ }
 
-        // --- ContextEngine integration: verify the wired preamble renders ---
-        Console.WriteLine("\n-- ContextEngine integration (renders system + memory) --");
-        await TestContextEngineAsync(embedding);
+        // --- ContextEngine integration: instructions-only preamble ---
+        // (Memory is NOT auto-injected by design; the agent retrieves via tools.)
+        Console.WriteLine("\n-- ContextEngine integration (instructions only) --");
+        await TestContextEngineAsync();
 
         Console.WriteLine("\n-- Config loader (parses commented JSON) --");
         await TestConfigAsync();
@@ -85,8 +86,8 @@ internal static class MemorySelfTest
         Console.WriteLine("\n-- Embedding provider factory --");
         TestEmbeddingFactory();
 
-        Console.WriteLine("\n-- Memory summarizer (offline fake model) --");
-        await TestSummarizerAsync(embedding);
+        Console.WriteLine("\n-- Agent-driven memory tools (write/retrieve/forget/clear) --");
+        await TestMemoryToolsAsync(embedding);
 
         Console.WriteLine("\n-- Session store (disk-backed JSONL round-trip) --");
         await TestSessionStoreAsync();
@@ -205,44 +206,107 @@ internal static class MemorySelfTest
     private static string Escape(string path)
         => path.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
-    private static async Task TestSummarizerAsync(IEmbeddingProvider embedding)
+    private static async Task TestMemoryToolsAsync(IEmbeddingProvider embedding)
     {
         string scratchRoot = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(), "cleoagent_selfest_sum_" + Guid.NewGuid().ToString("N"));
+            System.IO.Path.GetTempPath(), "cleoagent_selftest_mem_" + Guid.NewGuid().ToString("N"));
 
         var repo = new FileMemoryRepository(scratchRoot, "agentA", embedding);
 
-        // Fake provider that returns the JSON the real model would produce.
-        var fake = new FakeProviderModel("""
-        Here is my answer:
-        ```json
-        [
-          { "question": "What port does the app listen on?", "answer": "8080" },
-          { "question": "Which style does the UI use?", "answer": "Magenta accent buttons" },
-          { "question": "ignored-because-third-and-malformed", "answer": "x" }
-        ]
-        ```
-        """);
+        var write = new CleoAgent.Core.Tools.Impl.MemoryWriteTool(repo, embedding);
+        var retrieve = new CleoAgent.Core.Tools.Impl.MemoryRetrieveTool(repo, embedding);
+        var forget = new CleoAgent.Core.Tools.Impl.MemoryForgetTool(repo, embedding);
+        var clear = new CleoAgent.Core.Tools.Impl.MemoryClearTool(repo);
 
-        var summarizer = new MemorySummarizer(fake, repo, embedding, "agentA");
-
-        int stored = await summarizer.SummarizeAsync("user said hi\nassistant said hello", maxPairs: 2);
-
-        // maxPairs=2 should cap storage at 2 even though the reply has 3 pairs.
-        bool ok = stored == 2;
-
-        if (ok)
+        try
         {
-            var shorts = await repo.GetRecentAsync(CleoAgent.Core.Memory.MemoryTier.ShortTerm, limit: 10);
-            ok = shorts.Count == 2 && shorts.Any(m => m.Text.Contains("8080", StringComparison.Ordinal));
+            // write two memories
+            var r1 = await write.ExecuteAsync(Call("1", "memory_write", "{\"text\": \"The user's favourite hot drink is tea.\"}"), default);
+            var r2 = await write.ExecuteAsync(Call("2", "memory_write", "{\"text\": \"The build target is net10.0 and needs the .NET 10 SDK.\"}"), default);
+            bool wrote = !r1.IsError && !r2.IsError;
+            Console.WriteLine(wrote
+                ? "  OK: memory_write stored memories."
+                : $"  FAIL: memory_write ({r1.Output} | {r2.Output})");
+
+            // overview (no query)
+            var overview = await retrieve.ExecuteAsync(Call("3", "memory_retrieve", "{}"), default);
+            bool overviewOk = !overview.IsError && overview.Output.Contains("Recent memories (2)", StringComparison.Ordinal);
+            Console.WriteLine(overviewOk
+                ? "  OK: memory_retrieve overview lists recent memories."
+                : $"  FAIL: memory_retrieve overview ({overview.Output})");
+
+            // semantic hit: identical text query (deterministic under hash embeddings)
+            var hit = await retrieve.ExecuteAsync(Call("4", "memory_retrieve", "{\"query\": \"The user's favourite hot drink is tea.\"}"), default);
+            bool hitOk = !hit.IsError && hit.Output.Contains("tea", StringComparison.Ordinal) && hit.Output.Contains("[id:", StringComparison.Ordinal);
+            Console.WriteLine(hitOk
+                ? "  OK: memory_retrieve finds the stored memory by query."
+                : $"  FAIL: memory_retrieve hit ({hit.Output})");
+
+            // below-threshold query returns nothing (letters absent from stored texts)
+            var miss = await retrieve.ExecuteAsync(Call("5", "memory_retrieve", "{\"query\": \"zqx\"}"), default);
+            bool missOk = !miss.IsError && miss.Output.Contains("No memories match", StringComparison.Ordinal);
+            Console.WriteLine(missOk
+                ? "  OK: memory_retrieve threshold rejects unrelated query."
+                : $"  FAIL: memory_retrieve miss ({miss.Output})");
+
+            // forget by id: pull the id out of the hit result
+            string? id = ExtractId(hit.Output);
+            bool idOk = false;
+            if (id is not null)
+            {
+                var forgotten = await forget.ExecuteAsync(Call("6", "memory_forget", "{\"id\": \"" + id + "\"}"), default);
+                idOk = !forgotten.IsError && forgotten.Output.Contains("Forgot memory", StringComparison.Ordinal);
+            }
+            Console.WriteLine(idOk
+                ? "  OK: memory_forget removed the memory by id."
+                : $"  FAIL: memory_forget by id ({(id is null ? "no id found" : id)}).");
+
+            // forget by query
+            var forgottenQ = await forget.ExecuteAsync(Call("7", "memory_forget", "{\"query\": \"the build target net10\"}"), default);
+            bool qOk = !forgottenQ.IsError && forgottenQ.Output.Contains("Forgot 1 memory", StringComparison.Ordinal) && forgottenQ.Output.Contains("net10.0", StringComparison.Ordinal);
+            Console.WriteLine(qOk
+                ? "  OK: memory_forget removed the matching memory by query."
+                : $"  FAIL: memory_forget by query ({forgottenQ.Output})");
+
+            // clear requires confirmation
+            var refused = await clear.ExecuteAsync(Call("8", "memory_clear", "{\"confirm\": \"nope\"}"), default);
+            bool refuseOk = refused.IsError && refused.Output.Contains("Refusing", StringComparison.Ordinal);
+            Console.WriteLine(refuseOk
+                ? "  OK: memory_clear refuses without confirm=yes."
+                : $"  FAIL: memory_clear refusal ({refused.Output})");
+
+            // write one more, then clear for real
+            await write.ExecuteAsync(Call("9", "memory_write", "{\"text\": \"Temporary test note.\"}"), default);
+            var cleared = await clear.ExecuteAsync(Call("10", "memory_clear", "{\"confirm\": \"yes\"}"), default);
+            bool clearOk = !cleared.IsError && cleared.Output.Contains("Cleared 1 memories", StringComparison.Ordinal);
+            Console.WriteLine(clearOk
+                ? "  OK: memory_clear wiped the store."
+                : $"  FAIL: memory_clear ({cleared.Output})");
+
+            // persistence: fresh repo over same root sees the same (now empty) pool
+            var repo2 = new FileMemoryRepository(scratchRoot, "agentA", embedding);
+            var leftover = await repo2.GetRecentAsync(CleoAgent.Core.Memory.MemoryTier.ShortTerm, limit: 100);
+            Console.WriteLine(leftover.Count == 0
+                ? "  OK: cleared store persists (0 memories on reload)."
+                : $"  FAIL: reload found {leftover.Count} memories after clear.");
         }
+        finally
+        {
+            try { System.IO.Directory.Delete(scratchRoot, recursive: true); }
+            catch { /* best-effort */ }
+        }
+    }
 
-        Console.WriteLine(ok
-            ? "  OK: summarizer parsed pairs, capped to maxPairs=2."
-            : $"  FAIL: summarizer stored {stored} pairs (expected 2).");
+    // Pulls the first "[id: <hex>]" token out of a memory_retrieve result.
+    private static string? ExtractId(string output)
+    {
+        const string marker = "[id: ";
+        int start = output.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return null;
 
-        try { System.IO.Directory.Delete(scratchRoot, recursive: true); }
-        catch { /* best-effort */ }
+        start += marker.Length;
+        int end = output.IndexOf("]", start, StringComparison.Ordinal);
+        return end > start ? output.Substring(start, end - start) : null;
     }
 
     // Verifies the structured planner: create-plan parses JSON to steps, and
@@ -314,40 +378,24 @@ internal static class MemorySelfTest
         }
     }
 
-    private static async Task TestContextEngineAsync(IEmbeddingProvider embedding)
+    private static async Task TestContextEngineAsync()
     {
-        string scratchRoot = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(), "cleoagent_selfest_ctx_" + Guid.NewGuid().ToString("N"));
-
-        var repo = new FileMemoryRepository(scratchRoot, "default", embedding);
-
-        await repo.UpsertAsync(MemoryDocument.Create(
-            MemoryTier.ShortTerm,
-            "The build target is net10.0 and requires the .NET 10 SDK.",
-            await embedding.EmbedAsync("build target net10.0 SDK")));
-
         var engine = new ContextEngine(new IContextSource[]
         {
-            new SystemInstructionsSource(),
-            new MemorySource(repo, embedding)
+            new SystemInstructionsSource()
         });
 
         var request = new ContextRequest(
             AgentId: "default",
-            UserPrompt: "which SDK do I need to build this project?");
+            UserPrompt: "hi");
 
         string preamble = await engine.RenderAsync(request);
 
         Console.WriteLine($"  Preamble length: {preamble.Length} (expected > 0)");
-        Console.WriteLine(preamble.Contains("net10.0", StringComparison.OrdinalIgnoreCase)
-            ? "  OK: memory injected into context."
-            : "  FAIL: memory not injected.");
         Console.WriteLine(preamble.StartsWith("## System", StringComparison.OrdinalIgnoreCase)
-            ? "  OK: system instructions first."
+            ? "  OK: system instructions render first."
             : "  Note: system block not first (ordering check).");
-
-        try { System.IO.Directory.Delete(scratchRoot, recursive: true); }
-        catch { /* best-effort */ }
+        // NOTE: no MemorySource is registered by design - zero auto-injection.
     }
 
     private static Task TestConfigAsync()

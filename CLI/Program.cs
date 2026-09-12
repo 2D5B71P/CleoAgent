@@ -69,17 +69,14 @@ namespace CleoAgent.CLI
             var context = new ContextEngine(new IContextSource[]
             {
                 new SystemInstructionsSource(),
-                new WorkspaceInstructionsSource(),
-                new MemorySource(memory, embedding)
+                new WorkspaceInstructionsSource()
             });
 
             IModelProvider modelProvider = ModelProviderFactory.Create(
                 config.Model, context, s__Client, agentId, config.Compaction);
 
-            // Memory write path: distill recent conversation into short-term
-            // memories, then periodically consolidate into long-term facts.
-            var summarizer = new MemorySummarizer(modelProvider, memory, embedding, agentId);
-            var reflection = new MemoryReflection(modelProvider, memory, embedding, agentId);
+            // Agent-driven memory: the agent writes, forgets and retrieves at will
+            // via the memory_* tools (registered below). Nothing is auto-injected.
 
             // Modular web capability: providers selected from the [web] config
             // section via the same factory pattern as model/embedding providers.
@@ -104,18 +101,17 @@ namespace CleoAgent.CLI
                 new RemoveDirectoryTool(),
                 new EditFileInplaceTool(),
                 new WebFetchTool(config.Web.Fetch, fetchPrimary, fetchFallback),
-                new WebSearchTool(config.Web.Search, searchPrimary, searchFallback)
+                new WebSearchTool(config.Web.Search, searchPrimary, searchFallback),
+                new MemoryWriteTool(memory, embedding),
+                new MemoryRetrieveTool(memory, embedding),
+                new MemoryForgetTool(memory, embedding),
+                new MemoryClearTool(memory)
             );
 
             var agent = new AgentLoop(
                 modelProvider,
                 tools,
                 agentId,
-                summarizer,
-                summarizeEvery: config.Agent.SummarizeEvery,
-                reflection: reflection,
-                reflectAfter: 12,
-                repository: memory,
                 planning: config.Planning);
 
             // -----------------------------

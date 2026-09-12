@@ -10,10 +10,9 @@ namespace CleoAgent.Core.Config;
 // blocks the user sketched. Missing sections fall back to defaults so the file
 // is fully optional.
 internal sealed record AgentConfig(
-    string Id,
-    int SummarizeEvery)
+    string Id)
 {
-    public static AgentConfig Default => new("Cleo", 8);
+    public static AgentConfig Default => new("Cleo");
 }
 
 internal sealed record ModelConfig(
@@ -167,11 +166,6 @@ internal static class Config
                 if (agent.TryGetProperty("id", out JsonElement id))
                 {
                     agentConfig = agentConfig with { Id = Interpolate(id.GetString()) ?? agentConfig.Id };
-                }
-
-                if (agent.TryGetProperty("summarizeEvery", out JsonElement se) && se.ValueKind == JsonValueKind.Number)
-                {
-                    agentConfig = agentConfig with { SummarizeEvery = Math.Max(1, se.GetInt32()) };
                 }
 
                 result = result with { Agent = agentConfig };

@@ -10,6 +10,11 @@ using CleoAgent.Core.Model.Embedding;
 
 namespace CleoAgent.Core.Memory;
 
+// DEPRECATED (2026-09-12): superseded by agent-driven memory tools
+// (memory_write / memory_retrieve / memory_forget / memory_clear). The host no
+// longer schedules memory writes. Kept per the no-delete rule; no longer wired
+// into Program.cs or AgentLoop.
+//
 // The memory write path: given a window of recent conversation, asks the LLM to
 // distill it into the few highest-value question/answer pairs, embeds each, and
 // stores them as short-term memories. This is the "every handful of messages,
