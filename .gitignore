@@ -15,3 +15,6 @@ env.example.bak
 .env
 env
 config.json
+
+# Local scratch harnesses (WebFetchProbe et al.) — probe sources stay on disk, out of git
+/tools/

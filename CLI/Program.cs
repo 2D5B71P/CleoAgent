@@ -9,6 +9,9 @@ using CleoAgent.Core.Model.Embedding;
 using CleoAgent.Core.Model.Factories;
 using CleoAgent.Core.Tools;
 using CleoAgent.Core.Tools.Impl;
+using CleoAgent.Core.Web;
+using CleoAgent.Core.Web.Fetch;
+using CleoAgent.Core.Web.Search;
 using System.Text;
 
 namespace CleoAgent.CLI
@@ -78,13 +81,30 @@ namespace CleoAgent.CLI
             var summarizer = new MemorySummarizer(modelProvider, memory, embedding, agentId);
             var reflection = new MemoryReflection(modelProvider, memory, embedding, agentId);
 
+            // Modular web capability: providers selected from the [web] config
+            // section via the same factory pattern as model/embedding providers.
+            // "none" (default fallback) resolves to null -> that surface just
+            // reports it is unconfigured (no external cost).
+            IFetchProvider? fetchPrimary    = FetchProviderFactory.Create(config.Web.Fetch.Provider, s__Client, config.Web.Fetch.ProviderApiKey);
+            IFetchProvider? fetchFallback   = FetchProviderFactory.Create(config.Web.Fetch.ProviderFallback, s__Client, config.Web.Fetch.FallbackProviderApiKey);
+            ISearchProvider? searchPrimary  = SearchProviderFactory.Create(config.Web.Search.Provider, s__Client, config.Web.Search.ProviderApiKey);
+            ISearchProvider? searchFallback = SearchProviderFactory.Create(config.Web.Search.ProviderFallback, s__Client, config.Web.Search.FallbackProviderApiKey);
+
             ToolRegistry tools = new (
                 new RunCommandTool(),
                 new ReadFileTool(), 
                 new WriteFileTool(),
                 new ListDirectoryTool(),
                 new GrepTool(),
-                new GetEnvironmentInfoTool()
+                new GetEnvironmentInfoTool(),
+                new RemoveFileTool(),
+                new MoveFileTool(),
+                new RenameFileTool(),
+                new MakeDirectoryTool(),
+                new RemoveDirectoryTool(),
+                new EditFileInplaceTool(),
+                new WebFetchTool(config.Web.Fetch, fetchPrimary, fetchFallback),
+                new WebSearchTool(config.Web.Search, searchPrimary, searchFallback)
             );
 
             var agent = new AgentLoop(

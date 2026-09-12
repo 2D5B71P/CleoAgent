@@ -94,8 +94,116 @@ internal static class MemorySelfTest
         Console.WriteLine("\n-- Planner (structured plan + replan) --");
         await TestPlannerAsync();
 
+        Console.WriteLine("\n-- File tools (make/move/rename/edit/remove) --");
+        await TestFileToolsAsync();
+
         Console.WriteLine("\n=== Self-test complete ===");
     }
+
+    private static async Task TestFileToolsAsync()
+    {
+        string scratchRoot = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "cleoagent_selftest_tools_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratchRoot);
+
+        try
+        {
+            // make_dir
+            var makeDir = new CleoAgent.Core.Tools.Impl.MakeDirectoryTool();
+            string sub = System.IO.Path.Combine(scratchRoot, "a", "b");
+            var r = await makeDir.ExecuteAsync(Call("1", "make_dir", $"{{\"path\": \"{Escape(sub)}\"}}"), default);
+            bool dirOk = !r.IsError && Directory.Exists(sub);
+            Console.WriteLine(dirOk
+                ? "  OK: make_dir created nested directories."
+                : $"  FAIL: make_dir ({r.Output})");
+
+            // write_file (existing tool, used as setup)
+            string fileA = System.IO.Path.Combine(scratchRoot, "a.txt");
+            var write = new CleoAgent.Core.Tools.Impl.WriteFileTool();
+            r = await write.ExecuteAsync(Call("2", "write_file", $"{{\"path\": \"{Escape(fileA)}\", \"content\": \"hello world\"}}"), default);
+            bool writeOk = !r.IsError && File.ReadAllText(fileA) == "hello world";
+            Console.WriteLine(writeOk
+                ? "  OK: write_file wrote content."
+                : $"  FAIL: write_file ({r.Output})");
+
+            // edit_file_inplace: replace in place
+            var edit = new CleoAgent.Core.Tools.Impl.EditFileInplaceTool();
+            r = await edit.ExecuteAsync(Call("3", "edit_file_inplace",
+                $"{{\"path\": \"{Escape(fileA)}\", \"old_text\": \"hello\", \"new_text\": \"goodbye\"}}"), default);
+            bool editOk = !r.IsError && File.ReadAllText(fileA) == "goodbye world";
+            Console.WriteLine(editOk
+                ? "  OK: edit_file_inplace replaced unique text."
+                : $"  FAIL: edit_file_inplace ({r.Output})");
+
+            // edit_file_inplace: duplicate match is rejected
+            string fileDup = System.IO.Path.Combine(scratchRoot, "dup.txt");
+            await File.WriteAllTextAsync(fileDup, "x x x");
+            r = await edit.ExecuteAsync(Call("4", "edit_file_inplace",
+                $"{{\"path\": \"{Escape(fileDup)}\", \"old_text\": \"x\", \"new_text\": \"y\"}}"), default);
+            bool dupOk = r.IsError && r.Output.Contains("MULTIPLE", StringComparison.Ordinal) && File.ReadAllText(fileDup) == "x x x";
+            Console.WriteLine(dupOk
+                ? "  OK: edit_file_inplace rejected ambiguous (multi-match) edit."
+                : $"  FAIL: edit_file_inplace ambiguous handling ({r.Output})");
+
+            // rename_file
+            string fileB = System.IO.Path.Combine(scratchRoot, "b.txt");
+            var rename = new CleoAgent.Core.Tools.Impl.RenameFileTool();
+            r = await rename.ExecuteAsync(Call("5", "rename_file",
+                $"{{\"path\": \"{Escape(fileA)}\", \"new_name\": \"b.txt\"}}"), default);
+            bool renameOk = !r.IsError && File.Exists(fileB) && !File.Exists(fileA);
+            Console.WriteLine(renameOk
+                ? "  OK: rename_file renamed in place."
+                : $"  FAIL: rename_file ({r.Output})");
+
+            // move_file into a subdirectory
+            string moved = System.IO.Path.Combine(scratchRoot, "a", "b", "b.txt");
+            var move = new CleoAgent.Core.Tools.Impl.MoveFileTool();
+            r = await move.ExecuteAsync(Call("6", "move_file",
+                $"{{\"source\": \"{Escape(fileB)}\", \"destination\": \"{Escape(moved)}\"}}"), default);
+            bool moveOk = !r.IsError && File.Exists(moved) && !File.Exists(fileB);
+            Console.WriteLine(moveOk
+                ? "  OK: move_file relocated file + created parent dir."
+                : $"  FAIL: move_file ({r.Output})");
+
+            // remove_file
+            var remove = new CleoAgent.Core.Tools.Impl.RemoveFileTool();
+            r = await remove.ExecuteAsync(Call("7", "remove_file", $"{{\"path\": \"{Escape(moved)}\"}}"), default);
+            bool removeOk = !r.IsError && !File.Exists(moved);
+            Console.WriteLine(removeOk
+                ? "  OK: remove_file deleted the file."
+                : $"  FAIL: remove_file ({r.Output})");
+
+            // remove_dir: non-empty refusal + empty success
+            // First create a dir that still has a file so the guard should refuse.
+            string guarded = System.IO.Path.Combine(scratchRoot, "guarded");
+            Directory.CreateDirectory(guarded);
+            await File.WriteAllTextAsync(System.IO.Path.Combine(guarded, "keep.txt"), "x");
+            var removeDir = new CleoAgent.Core.Tools.Impl.RemoveDirectoryTool();
+            r = await removeDir.ExecuteAsync(Call("8", "remove_dir", $"{{\"path\": \"{Escape(guarded)}\"}}"), default);
+            bool refuseOk = r.IsError && r.Output.Contains("not empty", StringComparison.OrdinalIgnoreCase) && Directory.Exists(guarded);
+            Console.WriteLine(refuseOk
+                ? "  OK: remove_dir refused to delete non-empty dir."
+                : $"  FAIL: remove_dir refusal ({r.Output})");
+
+            // Now empty that dir so remove_dir should succeed.
+            File.Delete(System.IO.Path.Combine(guarded, "keep.txt"));
+            r = await removeDir.ExecuteAsync(Call("9", "remove_dir", $"{{\"path\": \"{Escape(guarded)}\"}}"), default);
+            bool removedEmptyOk = !r.IsError && !Directory.Exists(guarded);
+            Console.WriteLine(removedEmptyOk
+                ? "  OK: remove_dir deleted empty dir."
+                : $"  FAIL: remove_dir empty deletion ({r.Output})");
+        }
+        finally
+        {
+            try { Directory.Delete(scratchRoot, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private static CleoAgent.Core.Tools.ToolCall Call(string id, string name, string argsJson)
+        => new(id, name, argsJson);
+
+    private static string Escape(string path)
+        => path.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static async Task TestSummarizerAsync(IEmbeddingProvider embedding)
     {

@@ -61,19 +61,60 @@ internal sealed record PlanningConfig(
     public static PlanningConfig Default => new(false, 6, 8, true, 2);
 }
 
+// Modular web capability (web_fetch / web_search tools). Each surface is a
+// provider + optional fallback, mirroring how model/embedding providers are
+// selected — "default" is our free local implementation and "none" disables.
+//
+//   "web": {
+//     "fetch":  { "request_timeout_s": 30, "max_chars": 40000, "provider": "default", "provider_fallback": "jina" },
+//     "search": { "provider": "duckduckgo" }
+//   }
+//
+// request_timeout_s bounds each fetch; max_chars caps the markdown handed back
+// to the model (context-window guard). provider_fallback is tried only when the
+// primary provider's output fails the readability test (or the primary errors).
+internal sealed record FetchConfig(
+    int RequestTimeoutS,
+    int MaxChars,
+    string Provider,
+    string ProviderFallback,
+    string ProviderApiKey,
+    string FallbackProviderApiKey)
+{
+    public static FetchConfig Default => new(30, 40_000, "default", "none", "", "");
+}
+
+internal sealed record SearchConfig(
+    string Provider,
+    string ProviderFallback,
+    string ProviderApiKey,
+    string FallbackProviderApiKey)
+{
+    public static SearchConfig Default => new("duckduckgo", "none", "", "");
+}
+
+internal sealed record WebConfig(
+    FetchConfig Fetch,
+    SearchConfig Search)
+{
+    public static WebConfig Default => new(FetchConfig.Default, SearchConfig.Default);
+}
+
 internal sealed record AppConfig(
     AgentConfig Agent,
     ModelConfig Model,
     EmbeddingConfig Embedding,
     CompactionConfig Compaction,
-    PlanningConfig Planning)
+    PlanningConfig Planning,
+    WebConfig Web)
 {
     public static AppConfig Default => new(
         AgentConfig.Default,
         ModelConfig.Default,
         EmbeddingConfig.Default,
         CompactionConfig.Default,
-        PlanningConfig.Default);
+        PlanningConfig.Default,
+        WebConfig.Default);
 }
 
 internal static class Config
@@ -196,6 +237,49 @@ internal static class Config
                     planningConfig = planningConfig with { MaxReplans = Math.Max(0, mr.GetInt32()) };
 
                 result = result with { Planning = planningConfig };
+            }
+            if (TrySection(root, "web", out JsonElement web))
+            {
+                var webConfig = result.Web;
+
+                if (TrySection(web, "fetch", out JsonElement fetch))
+                {
+                    var fetchConfig = webConfig.Fetch;
+
+                    if (fetch.TryGetProperty("request_timeout_s", out JsonElement rt) && rt.ValueKind == JsonValueKind.Number)
+                        fetchConfig = fetchConfig with { RequestTimeoutS = Math.Max(1, rt.GetInt32()) };
+
+                    if (fetch.TryGetProperty("max_chars", out JsonElement mc) && mc.ValueKind == JsonValueKind.Number)
+                        fetchConfig = fetchConfig with { MaxChars = Math.Max(1, mc.GetInt32()) };
+
+                    if (fetch.TryGetProperty("provider", out JsonElement fp))
+                        fetchConfig = fetchConfig with { Provider = ReadString(fetch, "provider", fetchConfig.Provider) };
+
+                    if (fetch.TryGetProperty("provider_fallback", out JsonElement pf))
+                        fetchConfig = fetchConfig with { ProviderFallback = ReadString(fetch, "provider_fallback", fetchConfig.ProviderFallback) };
+
+                    if (fetch.TryGetProperty("provider_api_key", out JsonElement pak))
+                        fetchConfig = fetchConfig with { ProviderApiKey = ReadString(fetch, "provider_api_key", fetchConfig.ProviderApiKey) ?? "" };
+
+                    if (fetch.TryGetProperty("fallback_provider_api_key", out JsonElement fpak))
+                        fetchConfig = fetchConfig with { FallbackProviderApiKey = ReadString(fetch, "fallback_provider_api_key", fetchConfig.FallbackProviderApiKey) ?? "" };
+
+                    webConfig = webConfig with { Fetch = fetchConfig };
+                }
+
+                if (TrySection(web, "search", out JsonElement search))
+                {
+                    var searchConfig = webConfig.Search;
+
+                    searchConfig = searchConfig with { Provider = ReadString(search, "provider", searchConfig.Provider) };
+                    searchConfig = searchConfig with { ProviderFallback = ReadString(search, "provider_fallback", searchConfig.ProviderFallback) };
+                    searchConfig = searchConfig with { ProviderApiKey = ReadString(search, "provider_api_key", searchConfig.ProviderApiKey) ?? "" };
+                    searchConfig = searchConfig with { FallbackProviderApiKey = ReadString(search, "fallback_provider_api_key", searchConfig.FallbackProviderApiKey) ?? "" };
+
+                    webConfig = webConfig with { Search = searchConfig };
+                }
+
+                result = result with { Web = webConfig };
             }
         }
         catch (JsonException)

@@ -9,7 +9,13 @@ namespace CleoAgent.Core.Tools.Impl
     internal sealed class RunCommandTool : IAgentTool
     {
         public string Name => "run_command";
-        public string Description => "Run shell commands.";
+        public string Description =>
+            "Run a single executable with arguments. IMPORTANT: pass the executable name " +
+            "ALONE in \"command\" (e.g. \"cmd\", \"powershell\", \"curl\", \"python\") and each " +
+            "argument separately in \"args\". Do NOT put the whole command line as one string " +
+            "in \"command\" (e.g. do NOT pass \"cmd /c dir\" as a single value) — the executable " +
+            "path is run directly and will not be parsed. To run a Windows shell builtin or a " +
+            "multi-token line, use command=\"cmd\" with args=[\"/c\", \"<full line>\"].";
         public string ParametersJson =>
         """
         {
@@ -17,14 +23,14 @@ namespace CleoAgent.Core.Tools.Impl
           "properties": {
             "command": {
               "type": "string",
-              "description": "Command to run."
+              "description": "EXECUTABLE ONLY, no arguments: e.g. \"cmd\", \"powershell\", \"curl\", \"python\". Do not include the rest of the command line here."
             },
             "args": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Arguments passed directly to the executable."
+              "description": "Arguments passed directly to the executable, one per array element. For a shell line like 'cmd /c dir /s /b <path>', pass 'cmd' as command and '/c dir /s /b <path>' as a single args element."
             },
             "workdir": {
               "type": "string",

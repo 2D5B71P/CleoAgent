@@ -17,4 +17,21 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="ReverseMarkdown" Version="6.2.1" />
+    <PackageReference Include="SmartReader" Version="0.11.1" />
+  </ItemGroup>
+
+  <!-- The tools/ folder holds standalone harnesses (WebFetchProbe); keep them
+       out of the main project's compile glob. -->
+  <ItemGroup>
+    <Compile Remove="tools\**\*.cs" />
+  </ItemGroup>
+
+  <!-- Lets the WebFetchProbe test harness exercise internal providers
+       (IFetchProvider / DefaultFetchProvider) without booting the agent. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="WebFetchProbe" />
+  </ItemGroup>
+
 </Project>
