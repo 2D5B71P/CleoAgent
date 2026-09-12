@@ -1,5 +1,6 @@
 ﻿using CleoAgent.Core.Config;
 using CleoAgent.Core.Model;
+using CleoAgent.Core.Session;
 using CleoAgent.Core.Tools;
 using System;
 using System.Collections.Generic;
@@ -16,6 +17,7 @@ namespace CleoAgent.Core.Agent
 
         private readonly Planner         m__Planner;
         private readonly PlanningConfig  m__Planning;
+        private readonly SessionIdHandle? m__SessionId;
 
         private string? m__ContinuationToken;
         private ToolResult? lastResult;
@@ -24,12 +26,14 @@ namespace CleoAgent.Core.Agent
             IModelProvider modelProvider,
             ToolRegistry tools,
             string? agentId = null,
+            SessionIdHandle? sessionId = null,
             PlanningConfig? planning = null)
         {
             m__Model  = modelProvider;
             m__Tools  = tools;
             m__AgentId = string.IsNullOrWhiteSpace(agentId) ? "default" : agentId!;
             m__Planning    = planning ?? PlanningConfig.Default;
+            m__SessionId   = sessionId;
             m__Planner     = new Planner(modelProvider, m__AgentId);
         }
 
@@ -112,6 +116,11 @@ namespace CleoAgent.Core.Agent
                             break;
                         case ModelCompleted modelCompleted:
                             m__ContinuationToken = modelCompleted.ContinuationToken;
+                            // Mirror the token into the handle so session tools can
+                            // resolve the "current" session id (null until the first
+                            // completion, so "current" errors before any exchange).
+                            if (m__SessionId is not null && modelCompleted.ContinuationToken is not null)
+                                m__SessionId.Current = modelCompleted.ContinuationToken;
                             completed = true;
                             break;
                         case ModelError error:
@@ -199,6 +208,8 @@ namespace CleoAgent.Core.Agent
         public void Reset()
         {
             m__ContinuationToken = null;
+            if (m__SessionId is not null)
+                m__SessionId.Current = null;
         }
 
         // Builds the first user prompt for execution: the plan rendered as

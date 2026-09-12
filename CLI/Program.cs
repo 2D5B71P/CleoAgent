@@ -7,6 +7,7 @@ using CleoAgent.Core.Memory;
 using CleoAgent.Core.Model;
 using CleoAgent.Core.Model.Embedding;
 using CleoAgent.Core.Model.Factories;
+using CleoAgent.Core.Session;
 using CleoAgent.Core.Tools;
 using CleoAgent.Core.Tools.Impl;
 using CleoAgent.Core.Web;
@@ -87,6 +88,10 @@ namespace CleoAgent.CLI
             ISearchProvider? searchPrimary  = SearchProviderFactory.Create(config.Web.Search.Provider, s__Client, config.Web.Search.ProviderApiKey);
             ISearchProvider? searchFallback = SearchProviderFactory.Create(config.Web.Search.ProviderFallback, s__Client, config.Web.Search.FallbackProviderApiKey);
 
+            // Filled in by AgentLoop once the first model completion reveals the
+            // run's session id; lets session tools resolve the "current" pseudo-id.
+            var sessionHandle = new SessionIdHandle();
+
             ToolRegistry tools = new (
                 new RunCommandTool(),
                 new ReadFileTool(), 
@@ -105,13 +110,18 @@ namespace CleoAgent.CLI
                 new MemoryWriteTool(memory, embedding),
                 new MemoryRetrieveTool(memory, embedding),
                 new MemoryForgetTool(memory, embedding),
-                new MemoryClearTool(memory)
+                new MemoryClearTool(memory),
+                new ListSessionsTool(config.Agent.Id, sessionHandle),
+                new SearchSessionLogsTool(config.Agent.Id, sessionHandle),
+                new ReadSessionLogTool(config.Agent.Id, sessionHandle),
+                new NameSessionTool(config.Agent.Id, sessionHandle)
             );
 
             var agent = new AgentLoop(
                 modelProvider,
                 tools,
                 agentId,
+                sessionId: sessionHandle,
                 planning: config.Planning);
 
             // -----------------------------

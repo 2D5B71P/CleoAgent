@@ -17,7 +17,16 @@ implemented and live-verified. See [v0.1.0 release](https://github.com/2D5B71P/C
 - **Agent host + REPL CLI.** Streaming `IModelProvider` events; `AgentLoop`
   drives tool calls. Tools: `run_command`, `read_file`, `write_file`,
   `list_directory`, `grep`, `get_environment_info` (env tool reports **names
-  only**, never values).
+  only**, never values), memory tools, and web tools.
+- **Session logs you can actually search.** Every CLI run is one session
+  (append-only JSONL under `agents/<id>/session/`). Four tools work on them:
+  `list_sessions` (id, name, created, last activity, message count),
+  `search_session_logs` (text search across messages/tool outputs/session
+  names, with `from`/`to` date filters), `read_session_log` (paged history,
+  `"current"` = the live session), and `name_session` (labels a session so it
+  is findable later - "name this session 'web fetch debugging'"). Display
+  metadata lives in a per-agent `sessions.json` index, reconciled against disk;
+  name/times/counts never touch the raw JSONL.
 - **Per-agent persona.** `agent.md` per agent (id-scoped under
   `%APPDATA%\CleoAgent\agents\<id>\`), so multiple agents stay isolated.
 - **Persistent semantic memory.** Vector similarity store
@@ -75,7 +84,8 @@ API keys are **strictly** resolved from `config.*.api_key` (themselves usually
 - `Core/Context/` — `ContextEngine` + `IContextSource` (system, workspace,
   memory).
 - `Core/Memory/` — repository, embeddings, summarizer, reflection.
-- `Core/Session/` — `SessionMessage`, `SessionStore` (JSONL).
+- `Core/Session/` — `SessionMessage`, `SessionStore` (JSONL + `sessions.json`
+  display index), `SessionIdHandle` (live "current" session id).
 - `Core/Model/` — provider interfaces + OpenAI/OpenRouter providers, factories.
 - `Core/Tools/` — tool registry + implementations.
 - `Core/Config/` — config loading (comments + `${VAR}` interpolation).

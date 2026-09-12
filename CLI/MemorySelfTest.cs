@@ -535,6 +535,47 @@ internal static class MemorySelfTest
             ? "  OK: session ids are isolated."
             : $"  FAIL: unexpected {other.History.Count} msgs in fresh id.");
 
+        // Index: orphaned session files reconcile into sessions.json entries
+        // with metadata (name unset, message count derived from the log).
+        var store4 = new CleoAgent.Core.Session.SessionStore(scratchAgent);
+        var listed = store4.ListSessionEntries().ToList();
+        int idx = listed.FindIndex(e => e.Id == "sess-1");
+        var entry1 = idx >= 0 ? listed[idx] : null;
+
+        bool indexReconciled = entry1 is not null
+            && entry1.Name is null
+            && entry1.MessageCount == 2
+            && entry1.Created is not null
+            && entry1.LastActivity is not null;
+
+        Console.WriteLine(indexReconciled
+            ? "  OK: index reconciles orphaned session files with metadata."
+            : $"  FAIL: index reconcile got {listed.Count} entries.");
+
+        // Names: set on one store instance, visible from another (persisted
+        // to sessions.json), and clearable with an empty string.
+        store4.SetName("sess-1", "naming test");
+
+        var store5 = new CleoAgent.Core.Session.SessionStore(scratchAgent);
+        var renamed = store5.GetEntry("sess-1");
+
+        Console.WriteLine(renamed is not null && renamed.Name == "naming test"
+            ? "  OK: session name persists across store instances."
+            : "  FAIL: session name did not persist.");
+
+        store5.SetName("sess-1", "");
+        var cleared = store5.GetEntry("sess-1");
+
+        Console.WriteLine(cleared is not null && cleared.Name is null
+            ? "  OK: empty name clears the label."
+            : "  FAIL: name not cleared.");
+
+        // Unknown session: no entry, and SetName refuses.
+        Console.WriteLine(store5.GetEntry("no-such-session") is null
+            && !store5.SetName("no-such-session", "x")
+            ? "  OK: unknown session has no index entry."
+            : "  FAIL: unknown session got an index entry.");
+
         // Cleanup: remove the scratch agent's session dir under whatever APPDATA
         // AgentPaths resolved (works whether or not the static ctor had run).
         try
