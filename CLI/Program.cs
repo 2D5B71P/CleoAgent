@@ -114,7 +114,10 @@ namespace CleoAgent.CLI
                 new ListSessionsTool(config.Agent.Id, sessionHandle),
                 new SearchSessionLogsTool(config.Agent.Id, sessionHandle),
                 new ReadSessionLogTool(config.Agent.Id, sessionHandle),
-                new NameSessionTool(config.Agent.Id, sessionHandle)
+                new NameSessionTool(config.Agent.Id, sessionHandle),
+                new WorkClaimTool(config.Agent.Id, sessionHandle),
+                new WorkStatusTool(),
+                new WorkEndTool(config.Agent.Id, sessionHandle)
             );
 
             var agent = new AgentLoop(

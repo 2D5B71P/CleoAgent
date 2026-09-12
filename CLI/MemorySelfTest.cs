@@ -92,6 +92,9 @@ internal static class MemorySelfTest
         Console.WriteLine("\n-- Session store (disk-backed JSONL round-trip) --");
         await TestSessionStoreAsync();
 
+        Console.WriteLine("\n-- Work claim board (per-session coordination) --");
+        await TestWorkToolsAsync();
+
         Console.WriteLine("\n-- Planner (structured plan + replan) --");
         await TestPlannerAsync();
 
@@ -476,6 +479,129 @@ internal static class MemorySelfTest
         }
 
         return Task.CompletedTask;
+    }
+
+    // Verifies the agent_work coordination board: claim creation (+ content),
+    // per-session files, ACTIVE-claim collision warnings, staleness expiry
+    // with heartbeat refresh, preserving the started timestamp, and release.
+    // The session id comes from SessionIdHandle - the same injection the
+    // session tools use.
+    private static async Task TestWorkToolsAsync()
+    {
+        string scratchAgent = "selftest_" + Guid.NewGuid().ToString("N");
+        string project = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "cleoagent_worktest_" + Guid.NewGuid().ToString("N"));
+
+        string boardDir = System.IO.Path.Combine(project, "agent_work");
+        string claimFile = System.IO.Path.Combine(boardDir, "work-sess-1.md");
+
+        var handle = new CleoAgent.Core.Session.SessionIdHandle();
+        handle.Current = "work-sess-1";
+
+        var claimTool = new CleoAgent.Core.Tools.Impl.WorkClaimTool(scratchAgent, handle);
+        var statusTool = new CleoAgent.Core.Tools.Impl.WorkStatusTool();
+        var endTool = new CleoAgent.Core.Tools.Impl.WorkEndTool(scratchAgent, handle);
+
+        long savedWindow = CleoAgent.Core.Work.WorkStateStore.StaleAfterSeconds;
+
+        try
+        {
+            // 1. Claim -> file exists with task/files/agent; board shows one
+            // ACTIVE claim; the board folder self-ignores.
+            var claimed = await claimTool.ExecuteAsync(Call("1", "work_claim",
+                "{\"project\": \"" + Escape(project) + "\", \"task\": \"Fix the OLA buffer\", \"files\": \"p.py, utils.py\"}"), default);
+
+            string content = System.IO.File.ReadAllText(claimFile);
+            bool fileOk = System.IO.File.Exists(claimFile)
+                && content.Contains("agent: " + scratchAgent)
+                && content.Contains("task: Fix the OLA buffer")
+                && content.Contains("files: p.py, utils.py");
+
+            var board = CleoAgent.Core.Work.WorkStateStore.ReadClaims(project);
+            bool boardOk = board.Count == 1
+                && board[0].SessionId == "work-sess-1"
+                && board[0].Files.Count == 2
+                && !board[0].Stale;
+
+            bool gitignoreOk = System.IO.File.Exists(System.IO.Path.Combine(boardDir, ".gitignore"));
+
+            Console.WriteLine(fileOk && boardOk && gitignoreOk && !claimed.IsError
+                ? "  OK: work_claim writes a per-session claim (task/files/agent, active)."
+                : $"  FAIL: file={fileOk} board={boardOk} gitignore={gitignoreOk} err={claimed.Output}");
+
+            string firstStarted = board[0].Started;
+
+            // 2. A second session claims the same file -> the claim response
+            // reports the overlap as a collision warning.
+            var handle2 = new CleoAgent.Core.Session.SessionIdHandle();
+            handle2.Current = "work-sess-2";
+            var claimTool2 = new CleoAgent.Core.Tools.Impl.WorkClaimTool(scratchAgent, handle2);
+
+            var claimed2 = await claimTool2.ExecuteAsync(Call("2", "work_claim",
+                "{\"project\": \"" + Escape(project) + "\", \"task\": \"Also touching p.py\", \"files\": \"p.py\"}"), default);
+
+            bool collisionWarned = claimed2.Output.Contains("COLLISION WARNING")
+                && claimed2.Output.Contains("p.py");
+
+            Console.WriteLine(collisionWarned
+                ? "  OK: work_claim warns when files overlap an ACTIVE claim."
+                : $"  FAIL: no collision warning in: {claimed2.Output}");
+
+            // 3. Staleness: an old claim expires; a fresh claim (heartbeat
+            // refresh) is active again. The started timestamp survives.
+            CleoAgent.Core.Work.WorkStateStore.StaleAfterSeconds = 1;
+            await Task.Delay(1100);
+
+            var staleBoard = CleoAgent.Core.Work.WorkStateStore.ReadClaims(project);
+            bool staleOk = !staleBoard.Any(c => !c.Stale);
+
+            await claimTool.ExecuteAsync(Call("3", "work_claim",
+                "{\"project\": \"" + Escape(project) + "\", \"task\": \"Fix the OLA buffer\", \"files\": \"p.py, utils.py\"}"), default);
+
+            var refreshedRows = CleoAgent.Core.Work.WorkStateStore.ReadClaims(project);
+            int mineIdx = refreshedRows.FindIndex(c => c.SessionId == "work-sess-1");
+            int otherIdx = refreshedRows.FindIndex(c => c.SessionId == "work-sess-2");
+
+            bool refreshOk = mineIdx >= 0 && otherIdx >= 0
+                && !refreshedRows[mineIdx].Stale
+                && refreshedRows[otherIdx].Stale
+                && refreshedRows[mineIdx].Started == firstStarted
+                && refreshedRows.Count == 2;
+
+            Console.WriteLine(staleOk && refreshOk
+                ? "  OK: heartbeat expires -> stale; refreshing resurrects + keeps started."
+                : $"  FAIL: staleOk={staleOk} refreshOk={refreshOk}.");
+
+            CleoAgent.Core.Work.WorkStateStore.StaleAfterSeconds = savedWindow;
+
+            // 4. work_status reads the whole board from fresh scan, and
+            // work_end removes ONLY the caller's claim.
+            var statusOut = await statusTool.ExecuteAsync(Call("4", "work_status",
+                "{\"project\": \"" + Escape(project) + "\"}"), default);
+
+            bool statusOk = statusOut.Output.Contains("2 claim(s)")
+                && statusOut.Output.Contains("work-sess-2")
+                && statusOut.Output.Contains("STALE");
+
+            var ended = await endTool.ExecuteAsync(Call("5", "work_end",
+                "{\"project\": \"" + Escape(project) + "\"}"), default);
+
+            var after = CleoAgent.Core.Work.WorkStateStore.ReadClaims(project);
+            bool endOk = ended.Output.Contains("Released")
+                && !System.IO.File.Exists(claimFile)
+                && after.Count == 1
+                && after[0].SessionId == "work-sess-2";
+
+            Console.WriteLine(statusOk && endOk
+                ? "  OK: work_status lists the board; work_end releases only own claim."
+                : $"  FAIL: status={statusOk} end={endOk}.");
+        }
+        finally
+        {
+            CleoAgent.Core.Work.WorkStateStore.StaleAfterSeconds = savedWindow;
+            try { System.IO.Directory.Delete(project, recursive: true); }
+            catch { /* best-effort */ }
+        }
     }
 
     // Verifies the disk-backed session store: append → reload → same history,

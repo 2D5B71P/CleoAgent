@@ -27,6 +27,13 @@ implemented and live-verified. See [v0.1.0 release](https://github.com/2D5B71P/C
   is findable later - "name this session 'web fetch debugging'"). Display
   metadata lives in a per-agent `sessions.json` index, reconciled against disk;
   name/times/counts never touch the raw JSONL.
+- **Concurrent-session coordination.** Sessions working the same repo avoid
+  edit collisions through a project-local blackboard: `work_claim`
+  (claim/refresh your session's slot: task + files), `work_status` (who is
+  working here, with staleness), `work_end` (release). Claims live in
+  `<project>/agent_work/<sessionId>.md` - one file per SESSION, self-ignored
+  from git - and expire by heartbeat (30 min): stale claims are abandoned
+  and safe to take over. Advisory awareness, not locking.
 - **Per-agent persona.** `agent.md` per agent (id-scoped under
   `%APPDATA%\CleoAgent\agents\<id>\`), so multiple agents stay isolated.
 - **Persistent semantic memory.** Vector similarity store
