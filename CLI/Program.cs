@@ -198,7 +198,11 @@ namespace CleoAgent.CLI
 
                             case AgentToolCompleted tool:
                                 if (tool.IsError)
-                                    Console.WriteLine("[+ tool error]");
+                                {
+									Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine($"[+ tool error] {tool.ErrorMessage}");
+									Console.ForegroundColor = ConsoleColor.White;
+                                }
                                 break;
 
                             case AgentError error:

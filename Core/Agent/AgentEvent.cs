@@ -35,7 +35,8 @@ namespace CleoAgent.Core.Agent
 
     internal sealed record AgentToolCompleted(
         string ToolName,
-        bool IsError) : AgentEvent;
+        bool IsError,
+        string? ErrorMessage) : AgentEvent;
 
     internal sealed record AgentError(
         string Message) : AgentEvent;

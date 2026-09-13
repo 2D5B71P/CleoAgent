@@ -178,7 +178,7 @@ namespace CleoAgent.Core.Agent
                 bool errored = execution.IsError;
 
                 observations.Add($"Tool {pendingToolCall.Name}{(errored ? " ERRORED" : " ok")}: {Shorten(execution.Output)}");
-                yield return new AgentToolCompleted(pendingToolCall.Name, errored);
+                yield return new AgentToolCompleted(pendingToolCall.Name, errored, errored ? execution.Output : null);
 
                 // Deterministic re-plan on tool error (if enabled + budget remains).
                 if (errored && m__Planning.ReplanOnToolError
