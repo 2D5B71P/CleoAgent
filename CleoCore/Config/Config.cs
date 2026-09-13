@@ -99,6 +99,8 @@ internal sealed record WebConfig(
     public static WebConfig Default => new(FetchConfig.Default, SearchConfig.Default);
 }
 
+internal sealed record SectionPresence(bool ModuleOwned, bool LegacyPresent);
+
 internal sealed record AppConfig(
     AgentConfig Agent,
     ModelConfig Model,
@@ -282,6 +284,191 @@ internal static class Config
         }
 
         return result;
+    }
+
+    // ---- module config surface (Phase 2) ----------------------------------
+    // Each module reads its own section through ConfigSection (module-owned
+    // "modules.<id>" block first, legacy top-level section as fallback). The
+    // accessors below re-parse per call: config.json is tiny and read at boot,
+    // so caching buys nothing and would risk staleness under test overrides.
+
+    private static string? RawJsonText()
+    {
+        if (!File.Exists(ConfigPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return StripJsonComments(File.ReadAllText(ConfigPath));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // Resolves a dotted section path ("modules.memory" or "embedding") to the
+    // object member. Returns false when any segment is missing or not an object.
+    private static bool ResolveSection(JsonElement root, string path, out JsonElement section)
+    {
+        // Assign up front: this dialect's flow analysis cannot prove the loop
+        // assigns `section` on every path, so out-params must be pre-initialized.
+        section = root;
+        JsonElement current = root;
+        int start = 0;
+
+        while (start < path.Length)
+        {
+            int dot = path.IndexOf('.', start);
+            string segment = dot < 0 ? path.Substring(start) : path.Substring(start, dot - start);
+
+            if (!current.TryGetProperty(segment, out JsonElement next) || next.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            current = next;
+
+            if (dot < 0)
+            {
+                section = current;
+                return true;
+            }
+
+            start = dot + 1;
+        }
+
+        return false;
+    }
+
+    // Whether the legacy root section and/or the module-owned "modules.<id>"
+    // block exist (as objects) in the current config file.
+    public static SectionPresence SectionInfo(string legacyName, string moduleId)
+    {
+        string? valid = RawJsonText();
+        if (valid is null)
+        {
+            return new SectionPresence(false, false);
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(valid);
+            JsonElement root = document.RootElement;
+
+            bool legacy = root.TryGetProperty(legacyName, out JsonElement legacySection)
+                && legacySection.ValueKind == JsonValueKind.Object;
+
+            bool owned = false;
+            if (root.TryGetProperty("modules", out JsonElement modulesSection)
+                && modulesSection.ValueKind == JsonValueKind.Object)
+            {
+                owned = modulesSection.TryGetProperty(moduleId, out JsonElement moduleSection)
+                    && moduleSection.ValueKind == JsonValueKind.Object;
+            }
+
+            return new SectionPresence(owned, legacy);
+        }
+        catch (JsonException)
+        {
+            return new SectionPresence(false, false);
+        }
+    }
+
+    public static string? SectionString(string sectionPath, string key)
+    {
+        string? valid = RawJsonText();
+        if (valid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(valid);
+
+            if (!ResolveSection(document.RootElement, sectionPath, out JsonElement section))
+            {
+                return null;
+            }
+
+            if (!section.TryGetProperty(key, out JsonElement value) || value.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            return Interpolate(value.GetString());
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static int? SectionInt(string sectionPath, string key)
+    {
+        string? valid = RawJsonText();
+        if (valid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(valid);
+
+            if (!ResolveSection(document.RootElement, sectionPath, out JsonElement section))
+            {
+                return null;
+            }
+
+            if (!section.TryGetProperty(key, out JsonElement value) || value.ValueKind != JsonValueKind.Number)
+            {
+                return null;
+            }
+
+            return value.GetInt32();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static bool? SectionBool(string sectionPath, string key)
+    {
+        string? valid = RawJsonText();
+        if (valid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(valid);
+
+            if (!ResolveSection(document.RootElement, sectionPath, out JsonElement section))
+            {
+                return null;
+            }
+
+            if (!section.TryGetProperty(key, out JsonElement value))
+            {
+                return null;
+            }
+
+            if (value.ValueKind == JsonValueKind.True)
+                return true;
+            if (value.ValueKind == JsonValueKind.False)
+                return false;
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static bool TrySection(JsonElement root, string name, out JsonElement section) =>

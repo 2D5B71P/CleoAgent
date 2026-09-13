@@ -30,6 +30,19 @@ namespace CleoAgent.Core.Tools
             return m__Tools.TryGetValue(name, out tool);
         }
 
+        // Tool names in registration order (dictionary Keys are not iterable
+        // in this dialect; the tools already carry their names).
+        public IReadOnlyList<string> Names =>
+            m__Tools.Values.Select(tool => tool.Name).ToList();
+
+        // Unregisters a tool by name; used when a module fails to load (its
+        // partial registrations are rolled back) and by future module
+        // deactivation. Returns true when the tool was present.
+        public bool Unregister(string name)
+        {
+            return m__Tools.Remove(name);
+        }
+
         public IReadOnlyList<ToolDefinition> GetDefinitions()
         {
             return m__Tools.Values

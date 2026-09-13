@@ -7,6 +7,7 @@ using CleoAgent.Core.Memory;
 using CleoAgent.Core.Model;
 using CleoAgent.Core.Model.Embedding;
 using CleoAgent.Core.Model.Factories;
+using CleoAgent.Core.Modules;
 using CleoAgent.Core.Session;
 using CleoAgent.Core.Tools;
 using CleoAgent.Core.Tools.Impl;
@@ -48,6 +49,8 @@ namespace CleoAgent.CLI
 
             if (args.Length > 0 && args[0] == "--selftest")
             {
+                await ModuleSelfTest.RunAsync();
+                await CompositionSelfTest.RunAsync();
                 await MemorySelfTest.RunAsync();
                 return;
             }
@@ -70,12 +73,10 @@ namespace CleoAgent.CLI
                 return;
             }
 
-            // Per-agent memory + embedding + context engine. The embedding provider
-            // is selected from the [embedding] config section (none→hash, openai/
-            // openrouter→real API).
-            IEmbeddingProvider embedding = EmbeddingProviderFactory.Create(config.Embedding, s__Client);
-            IMemoryRepository memory = new FileMemoryRepository(AgentPaths.AgentsRoot, agentId, embedding);
-
+            // Per-agent context engine + model provider (host kernel). The model
+            // provider is selected from the [model] config section; the embedding
+            // provider is selected by the MEMORY MODULE from the [embedding]
+            // config section (none->hash, openai/openrouter->real API).
             var context = new ContextEngine(new IContextSource[]
             {
                 new SystemInstructionsSource(),
@@ -85,6 +86,41 @@ namespace CleoAgent.CLI
             IModelProvider modelProvider = ModelProviderFactory.Create(
                 config.Model, context, s__Client, agentId, config.Compaction);
 
+            // Data-driven composition (module system, Phase 2): every tool set is
+            // registered by its module into the shared registry. The host kernel
+            // (context engine, model provider, session handle) is built here; the
+            // old hand-wired composition is preserved below as a commented block
+            // (house rule: never delete, Deprecate).
+
+            // Filled in by AgentLoop once the first model completion reveals the
+            // run's session id; lets session tools resolve the "current" pseudo-id.
+            var sessionHandle = new SessionIdHandle();
+
+            ToolRegistry tools = new ();
+            var services = new ServiceRegistry();
+            var moduleManager = new ModuleManager(new ModuleContext(tools, services, agentId, AgentPaths.AgentsRoot));
+
+            moduleManager.Register(new DevtoolsModule());
+            moduleManager.Register(new SessionModule(agentId, sessionHandle));
+            moduleManager.Register(new WorkModule(agentId, sessionHandle));
+            moduleManager.Register(new MemoryModule(s__Client));
+            moduleManager.Register(new WebModule(s__Client));
+
+            var loadFailures = await moduleManager.LoadAllAsync();
+            foreach (string failure in loadFailures)
+            {
+                Console.Error.WriteLine(failure);
+            }
+
+            // Kernel tools: always on, never unloadable, owned by the host.
+            tools.Register(new ListModulesTool(moduleManager));
+            tools.Register(new ModuleStatusTool(moduleManager));
+            tools.Register(new ModuleEnableTool(moduleManager));
+            tools.Register(new ModuleDisableTool(moduleManager));
+
+            /* Deprecate (2026-09-13): hand-wired composition replaced by the
+               module system (Phase 2). Kept for rollback safety - do not
+               re-enable without checking DESIGN-modules.md first.
             // Agent-driven memory: the agent writes, forgets and retrieves at will
             // via the memory_* tools (registered below). Nothing is auto-injected.
 
@@ -128,7 +164,7 @@ namespace CleoAgent.CLI
                 new WorkStatusTool(),
                 new WorkEndTool(config.Agent.Id, sessionHandle)
             );
-
+            */
             var agent = new AgentLoop(
                 modelProvider,
                 tools,
