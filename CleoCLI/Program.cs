@@ -99,6 +99,20 @@ namespace CleoAgent.CLI
             moduleManager.Register(new MemoryModule(s__Client));
             moduleManager.Register(new WebModule(s__Client));
 
+            // Phase 4: external agent-authored + third-party modules from disk
+            // (per-agent shadows host-wide on id collision). Validation failures
+            // refuse that module BY NAME - never the host boot. Modules already
+            // loaded register their tools; newly scanned default-active ones
+            // are picked up by LoadAllAsync below (or by the next turn's
+            // ApplyPendingAsync rescan for mid-session installs).
+            var externalFailures = moduleManager.ScanExternal(
+                AgentPaths.AgentModulesDir(agentId),
+                AgentPaths.HostModulesDir);
+            foreach (string failure in externalFailures)
+            {
+                Console.Error.WriteLine(failure);
+            }
+
             var loadFailures = await moduleManager.LoadAllAsync();
             foreach (string failure in loadFailures)
             {

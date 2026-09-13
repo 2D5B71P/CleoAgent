@@ -31,6 +31,16 @@ internal static class AgentPaths
     public static string AgentInstructionsFile(string agentId) =>
         Path.Combine(AgentDir(agentId), "agent.md");
 
+    // External module dirs (design s7, resolution 4, 2026-09-13): per-agent
+    // <agents>/<id>/modules/<id> (tier 2, agent-authored, isolated) and
+    // host-wide %APPDATA%\modules\<id> (tier 3, third-party, curated).
+    // Per-agent SHADOWS host-wide on id collision (scan per-agent first).
+    public static string AgentModulesDir(string agentId) =>
+        Path.Combine(AgentDir(agentId), "modules");
+
+    public static string HostModulesDir =>
+        Path.Combine(s_AppData, "modules");
+
     public static string AgentMemoryDir(string agentId) =>
         Path.Combine(AgentDir(agentId), "memory");
 

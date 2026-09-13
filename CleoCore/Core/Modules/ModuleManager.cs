@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,7 +28,11 @@ internal sealed class ModuleManager
 {
     private readonly ModuleContext _hostContext;   // registries + host identity, shared by all modules
     private readonly Dictionary<string, IModule> _registered = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _externalIds = new(StringComparer.OrdinalIgnoreCase); // ids scanned from disk (vs builtins)
+    private readonly List<string> _newlyScanned = new();   // ids registered by the LAST ScanExternal call (Phase 4)
     private readonly List<string> _order = new();  // registration order (Keys are not iterable in this dialect)
+    private string? _agentModulesRoot;             // set by ScanExternal; enables runtime rescan in ApplyPendingAsync
+    private string? _hostModulesRoot;
     private readonly Dictionary<string, bool> _active = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _pending = new(StringComparer.OrdinalIgnoreCase);   // desired active state, applied next turn
     private readonly Dictionary<string, int> _toolCounts = new(StringComparer.OrdinalIgnoreCase);
@@ -180,6 +185,85 @@ internal sealed class ModuleManager
         return failures;
     }
 
+    // ---- external module discovery (Phase 4) -----------------------------
+
+    // Scans the two external module roots for NEW modules and registers them:
+    // per-agent root FIRST, then host-wide - so per-agent SHADOWS host-wide on
+    // id collision (resolution 4, 2026-09-13). A directory is one module:
+    // <root>/<id>/module.json (+ scripts the tools invoke). Validation follows
+    // ExternalModuleLoader; failures are returned by name (never thrown, never
+    // brick the host boot - the host continues with the modules that are good).
+    // A module whose id collides with a BUILT-IN (or host-wide earlier scan)
+    // is refused loudly - disk modules can never silently replace a builtin.
+    //
+    // Called at boot (Program.cs, before LoadAllAsync) AND at each turn
+    // boundary (ApplyPendingAsync), so the exit gate works: the agent writes a
+    // module + installs it mid-session; the next turn's rescan registers it;
+    // if default-active and allowed, the enable pass activates it that
+    // boundary and its tools appear next turn.
+    public IReadOnlyList<string> ScanExternal(string agentModulesRoot, string hostModulesRoot)
+    {
+        _agentModulesRoot = agentModulesRoot;
+        _hostModulesRoot = hostModulesRoot;
+        _newlyScanned.Clear();
+
+        var failures = new List<string>();
+
+        ScanRoot(agentModulesRoot, failures);
+        ScanRoot(hostModulesRoot, failures);
+
+        return failures;
+    }
+
+    private void ScanRoot(string root, List<string> failures)
+    {
+        if (root is null || root.Length == 0 || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        var moduleDirs = Directory.EnumerateDirectories(root)
+            .OrderBy(path => path)
+            .ToList();
+
+        foreach (string dir in moduleDirs)
+        {
+            string id = Path.GetFileName(dir);
+
+            bool alreadyExternal;
+            if (_externalIds.TryGetValue(id, out alreadyExternal) && alreadyExternal)
+            {
+                // Shown twice (e.g. host-wide copy of a per-agent module):
+                // per-agent wins, host-wide is not registered (no error).
+                continue;
+            }
+
+            if (_registered.ContainsKey(id))
+            {
+                failures.Add(string.Format(
+                    "module \"{0}\" ({1}): collides with an already-registered module " +
+                    "(builtin or earlier scan) - externals can never replace it.", id, dir));
+                _externalIds[id] = true;
+                continue;
+            }
+
+            string? loadError = null;
+            ExternalModule? module = ExternalModuleLoader.Load(dir, id, out loadError);
+
+            if (module is null)
+            {
+                failures.Add(string.Format(
+                    "module \"{0}\" ({1}): {2} - refused by name, host continues.",
+                    id, dir, loadError ?? "unknown validation failure"));
+                continue;
+            }
+
+            Register(module);
+            _externalIds[id] = true;
+            _newlyScanned.Add(id);
+        }
+    }
+
     // ---- logical activation (Phase 3) -----------------------------------
 
     // Queues an activation (next turn). Returns null on success, or a clear
@@ -300,6 +384,43 @@ internal sealed class ModuleManager
     public async Task<IReadOnlyList<string>> ApplyPendingAsync(CancellationToken cancellationToken = default)
     {
         var failures = new List<string>();
+
+        // Phase 4: rescan external module dirs at every turn boundary so a
+        // module the agent wrote + installed mid-session is picked up next
+        // turn. If a fresh external module is scanned at boot (before
+        // LoadAllAsync), Program.cs already loaded it; here we only need to
+        // handle modules that appear AFTER boot. Newly scanned default-active
+        // modules are queued into _pending so the enable pass below activates
+        // them this boundary (their tools become visible next turn).
+        var scanFailures = ScanExternal(
+            _agentModulesRoot ?? string.Empty,
+            _hostModulesRoot ?? string.Empty);
+        foreach (string failure in scanFailures)
+        {
+            failures.Add(failure);
+        }
+
+        // Newly scanned external modules with activation.default=true: queue
+        // for activation now (they took effect at THIS boundary the same way
+        // boot-time scanning does; tools become visible next turn). Restricted
+        // to ids SCANNED THIS CALL so a model-disabled builtin is never
+        // revived by the rescan.
+        foreach (string id in _newlyScanned)
+        {
+            if (IsActive(id) || !_allowlist.IsAllowed(id))
+            {
+                continue;
+            }
+            if (!_registered.TryGetValue(id, out var newModule))
+            {
+                continue;
+            }
+            if (newModule.Manifest().DefaultActive)
+            {
+                _pending[id] = true;
+            }
+        }
+        _newlyScanned.Clear();
 
         // Disables first (they cannot strand dependents - RequestDisable
         // refuses those), then enables in registration order (dependencies

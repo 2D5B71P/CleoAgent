@@ -32,6 +32,10 @@ internal static class ModuleSelfTest
         await TestRequestRefusalsAsync();
         await TestAllowlistNarrowingAsync();
         await TestEnableCascadesDependenciesAsync();
+        await TestExternalScanAsync();
+        await TestExternalExecutionAsync();
+        await TestExternalShadowingAsync();
+        await TestExternalValidationAsync();
 
         Console.WriteLine("  OK: module system self-test complete.");
     }
@@ -441,6 +445,216 @@ internal static class ModuleSelfTest
         Console.WriteLine(bothActive
             ? "  OK: enable cascades to dormant dependencies (loaded first)."
             : "  FAIL: cascade. " + Describe(applyFailures, log));
+    }
+
+    // ---- Phase 4: external agent-authored modules (design s7, tier 2) -----
+
+    // A valid module dir on disk (module.json + a script the tool invokes
+    // out-of-process) is discovered by ScanExternal, registered, and loaded
+    // like any builtin: tools appear, module shows active.
+    private static async Task TestExternalScanAsync()
+    {
+        var root = TempExternalRoot("ext_scan");
+        WriteModule(root, "echo_mod",
+            "{\n" +
+            "  \"id\": \"echo_mod\",\n" +
+            "  \"kind\": \"external\",\n" +
+            "  \"version\": \"1.0.0\",\n" +
+            "  \"description\": \"Echoes args back\",\n" +
+            "  \"author\": \"selftest\",\n" +
+            "  \"created\": \"2026-09-13\",\n" +
+            "  \"modified\": \"2026-09-13\",\n" +
+            "  \"requires\": [\"core\"],\n" +
+            "  \"tools\": [\n" +
+            "    {\n" +
+            "      \"name\": \"echo_args\",\n" +
+            "      \"description\": \"Return the args JSON unchanged\",\n" +
+            "      \"parameters\": { \"type\": \"object\" },\n" +
+            "      \"impl\": { \"command\": [\"cmd\", \"/v:on\", \"/c\", \"set /p L=& echo GOT:!L!\"] }\n" +
+            "    }\n" +
+            "  ]\n" +
+            "}\n");
+
+        var tools = new ToolRegistry();
+        var manager = new ModuleManager(Context(tools));
+
+        var failures = manager.ScanExternal(root, Path.Combine(root, "host"));
+        bool scanOk = failures.Count == 0 && manager.IsRegistered("echo_mod");
+
+        var loadFailures = await manager.LoadAllAsync();
+        bool loadOk = loadFailures.Count == 0 && manager.IsActive("echo_mod");
+        bool toolOk = tools.Names.Contains("echo_args");
+
+        bool authorOk = false;
+        foreach (ModuleStatus status in manager.Status())
+        {
+            if (status.Id == "echo_mod")
+            {
+                authorOk = status.Manifest.Author == "selftest" && status.Manifest.Created == "2026-09-13";
+            }
+        }
+
+        Console.WriteLine(scanOk && loadOk && toolOk && authorOk
+            ? "  OK: external module scanned, loaded, tool registered, audit fields carried."
+            : string.Format(
+                "  FAIL: external scan. scanOk={0}, loadOk={1}, toolOk={2}, authorOk={3} | scan failures: {4}",
+                scanOk, loadOk, toolOk, authorOk, ListToString(failures)));
+    }
+
+    // The script-backed tool runs OUT-OF-PROCESS: stdin gets the args JSON,
+    // stdout (exit 0) is the result, non-zero exit becomes an error.
+    private static async Task TestExternalExecutionAsync()
+    {
+        var root = TempExternalRoot("ext_exec");
+        WriteModule(root, "echo_mod",
+            "{\n" +
+            "  \"id\": \"echo_mod\",\n" +
+            "  \"kind\": \"external\",\n" +
+            "  \"version\": \"1.0.0\",\n" +
+            "  \"description\": \"Echoes args back\",\n" +
+            "  \"tools\": [\n" +
+            "    {\n" +
+            "      \"name\": \"echo_args\",\n" +
+            "      \"description\": \"Return the args JSON unchanged\",\n" +
+            "      \"impl\": { \"command\": [\"cmd\", \"/v:on\", \"/c\", \"set /p L=& echo GOT:!L!\"] }\n" +
+            "    },\n" +
+            "    {\n" +
+            "      \"name\": \"fail_tool\",\n" +
+            "      \"description\": \"Exits non-zero\",\n" +
+            "      \"impl\": { \"command\": [\"cmd\", \"/c\", \"exit /b 7\"] }\n" +
+            "    }\n" +
+            "  ]\n" +
+            "}\n");
+
+        var tools = new ToolRegistry();
+        var manager = new ModuleManager(Context(tools));
+        var failures = manager.ScanExternal(root, Path.Combine(root, "host"));
+        await manager.LoadAllAsync();
+
+        var okResult = await tools.ExecuteAsync(
+            new ToolCall("c1", "echo_args", "{\"who\":\"selftest\",\"n\":42}"));
+        var failResult = await tools.ExecuteAsync(
+            new ToolCall("c2", "fail_tool", "{}"));
+
+        bool ok = failures.Count == 0
+            && !okResult.IsError
+            && okResult.Output == "GOT:{\"who\":\"selftest\",\"n\":42}"
+            && failResult.IsError
+            && failResult.Output.Contains("7");
+
+        Console.WriteLine(ok
+            ? "  OK: script tool executes out-of-process (stdin args, stdout result, exit code error)."
+            : string.Format("  FAIL: external execution. okResult=[{0}] errResult=[{1}]",
+                okResult.Output, failResult.Output));
+    }
+
+    // Per-agent shadows host-wide on id collision (resolution 4): the same
+    // module id in both roots registers once - the per-agent copy wins and the
+    // host-wide copy is reported as a collision refusal.
+    private static async Task TestExternalShadowingAsync()
+    {
+        var root = TempExternalRoot("ext_shadow");
+        var agentRoot = Path.Combine(root, "agent");
+        var hostRoot = Path.Combine(root, "host");
+
+        WriteModule(agentRoot, "dup_mod",
+            "{\n" +
+            "  \"id\": \"dup_mod\",\n" +
+            "  \"version\": \"1.1.0\",\n" +
+            "  \"description\": \"per-agent copy\",\n" +
+            "  \"tools\": [{\"name\": \"agent_tool\", \"description\": \"a\", \"impl\": {\"command\": [\"cmd\", \"/c\", \"echo agent\"]}}]\n" +
+            "}\n");
+
+        WriteModule(hostRoot, "dup_mod",
+            "{\n" +
+            "  \"id\": \"dup_mod\",\n" +
+            "  \"version\": \"1.0.0\",\n" +
+            "  \"description\": \"host-wide copy (should be shadowed)\",\n" +
+            "  \"tools\": [{\"name\": \"host_tool\", \"description\": \"h\", \"impl\": {\"command\": [\"cmd\", \"/c\", \"echo host\"]}}]\n" +
+            "}\n");
+
+        var tools = new ToolRegistry();
+        var manager = new ModuleManager(Context(tools));
+        var failures = manager.ScanExternal(agentRoot, hostRoot);
+
+        bool once = tools.Names.Count == 0;
+        bool agentWins = manager.IsRegistered("dup_mod")
+            && tools.Names.Count == 0
+            && manager.Status().Count == 1;
+
+        await manager.LoadAllAsync();
+
+        bool loadedAgent = manager.IsActive("dup_mod")
+            && tools.Names.Contains("agent_tool")
+            && !tools.Names.Contains("host_tool");
+        bool noFailure = failures.Count == 0;   // host-wide copy skipped silently, not an error
+
+        Console.WriteLine(once && agentWins && loadedAgent && noFailure
+            ? "  OK: per-agent external module shadows host-wide; no collision error."
+            : string.Format("  FAIL: shadowing. failures: {0}, tools: {1}",
+                ListToString(failures), ListToString(tools.Names)));
+    }
+
+    // Validation failures refuse that module BY NAME - bad JSON, id mismatch,
+    // wrong kind, no tools, reserved tool name - and the host continues with
+    // whatever is valid.
+    private static async Task TestExternalValidationAsync()
+    {
+        var root = TempExternalRoot("ext_validation");
+
+        WriteModule(root, "bad_json", "{ not json");
+        WriteModule(root, "id_mismatch", "{\"id\": \"other\", \"version\": \"1.0.0\", \"tools\": []}");
+        WriteModule(root, "compiled_kind", "{\"id\": \"compiled_kind\", \"kind\": \"compiled\", \"version\": \"1.0.0\", \"tools\": []}");
+        WriteModule(root, "no_tools", "{\"id\": \"no_tools\", \"version\": \"1.0.0\"}");
+        WriteModule(root, "reserved_tool", "{\"id\": \"reserved_tool\", \"version\": \"1.0.0\", \"tools\": [{\"name\": \"module_status\", \"description\": \"x\", \"impl\": {\"command\": [\"cmd\"]}}]}");
+
+        var tools = new ToolRegistry();
+        var manager = new ModuleManager(Context(tools));
+        var failures = manager.ScanExternal(root, Path.Combine(root, "host"));
+        await manager.LoadAllAsync();
+
+        bool refusedByName = failures.Count >= 4;
+        bool noneRegistered = !manager.IsRegistered("bad_json")
+            && !manager.IsRegistered("id_mismatch")
+            && !manager.IsRegistered("compiled_kind")
+            && !manager.IsRegistered("no_tools")
+            && !manager.IsRegistered("reserved_tool");
+        bool hostContinues = manager.ActiveCount() == 0;   // no crash, nothing bogus loaded
+
+        Console.WriteLine(refusedByName && noneRegistered && hostContinues
+            ? "  OK: invalid externals refused by name (bad json/id/kind/tools/reserved); host unaffected."
+            : string.Format("  FAIL: external validation. failures: {0}", ListToString(failures)));
+    }
+
+    // Creates a unique temp dir for one external-module test run.
+    private static string TempExternalRoot(string tag)
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), "cleoagent_ext_" + tag + "_" + Guid.NewGuid().ToString("N"));
+        return root;
+    }
+
+    private static void WriteModule(string root, string moduleId, string moduleJson)
+    {
+        string dir = Path.Combine(root, moduleId);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "module.json"), moduleJson);
+    }
+
+    private static string ListToString(IReadOnlyList<string> items)
+    {
+        var sb = new StringBuilder();
+        bool first = true;
+        foreach (string item in items)
+        {
+            if (!first)
+            {
+                sb.Append(", ");
+            }
+            sb.Append(item);
+            first = false;
+        }
+        return sb.ToString();
     }
 
     private static List<string> NamesOf(string name)

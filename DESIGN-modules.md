@@ -5,9 +5,10 @@ Status: **Draft v2 (rev 2026-09-13)**. Decisions locked: multi-project solution;
 external modules for agent-built and third-party code (discovered on disk at
 runtime, §7); activation policy = config allowlist + model may enable anything
 allowed (no user approval gate). Open questions (§11) all answered 2026-09-13 —
-see resolutions below. Implemented through Phase 3 (2026-09-13): Phases 1-2
+see resolutions below. Implemented through Phase 4 (2026-09-13): Phases 1-2
 committed (bd54297, 666b3bc); Phase 3 committed (module allowlist + model-
-requestable logical activation, live-verified).
+requestable logical activation, live-verified); Phase 4 committed (external
+agent-authored modules, script-backed + out-of-process, live-verified).
 
 ---
 
@@ -348,15 +349,16 @@ needed; the live `%APPDATA%\CleoAgent\config.json` keeps working.
   next turn; another where allowlist denies a module and the tool reports the
   denial clearly.
 
-**Phase 4 — Agent-authored modules (self-extension, external)**
+**Phase 4 ✓ Agent-authored modules (self-extension, external) (implemented 2026-09-13)**
 - External module pipeline lands: scan `agents/<id>/modules/<name>/` (and
-  host-wide `<appdata>/modules/`), validate `module.json`, load **script-backed**
+  host-wide `%APPDATA%\modules/`), validate `module.json`, load **script-backed**
   tools (`impl.command` + JSON schema params), executed out-of-process via the
   same primitives as `run_command` (trust tier 2 — never in-process).
 - Authoring guidance appended to the agent persona; manifest carries
   author/created/modified audit fields.
 - Exit gate: one live turn where the agent writes a module, installs it, and
-  uses its tool.
+  uses its tool (verified live: greet module written turn N, discovered by the
+  turn-N+1 boundary rescan, tool called and returned output).
 
 **Phase 5 — (gated) third-party compiled plugins**
 - Compiled plugin DLLs discovered + loaded at runtime for **signed/allowlisted

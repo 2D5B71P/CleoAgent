@@ -16,7 +16,10 @@ internal sealed record ModuleManifest(
     IReadOnlyList<string> Provides,     // tool names / service names this module registers
     string? ConfigSection,              // legacy top-level config section name ("web", "embedding"); null = no config surface
     bool DefaultActive = true,
-    bool ModelRequestable = false)
+    bool ModelRequestable = false,
+    string? Author = null,              // external-module audit fields (Phase 4); null for builtins
+    string? Created = null,
+    string? Modified = null)
 {
     public static ModuleManifest Create(
         string id,
@@ -26,7 +29,10 @@ internal sealed record ModuleManifest(
         IReadOnlyList<string>? provides = null,
         string? configSection = null,
         bool defaultActive = true,
-        bool modelRequestable = false)
+        bool modelRequestable = false,
+        string? author = null,
+        string? created = null,
+        string? modified = null)
     {
         return new ModuleManifest(
             id,
@@ -36,6 +42,9 @@ internal sealed record ModuleManifest(
             provides ?? new List<string>(),
             configSection,
             defaultActive,
-            modelRequestable);
+            modelRequestable,
+            author,
+            created,
+            modified);
     }
 }

@@ -58,6 +58,20 @@ internal sealed class ListModulesTool : IAgentTool
             sb.Append("  requires:   ").AppendLine(Join(status.Manifest.Requires));
             sb.Append("  provides:   ").AppendLine(Join(status.Manifest.Provides));
             sb.Append("  description:").Append(' ').AppendLine(status.Manifest.Description);
+            // Audit fields (Phase 4): external module.json carries them;
+            // builtins have none.
+            if (status.Manifest.Author is not null)
+            {
+                sb.Append("  author:     ").AppendLine(status.Manifest.Author);
+            }
+            if (status.Manifest.Created is not null)
+            {
+                sb.Append("  created:    ").AppendLine(status.Manifest.Created);
+            }
+            if (status.Manifest.Modified is not null)
+            {
+                sb.Append("  modified:   ").AppendLine(status.Manifest.Modified);
+            }
         }
 
         return new ToolResult(call.Id, sb.ToString().TrimEnd());

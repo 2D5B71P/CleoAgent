@@ -529,7 +529,9 @@ internal static class Config
     // Removes // line and /* */ block comments so config.json may be written with
     // the same self-documenting comments as the example template. String-aware so
     // comment markers inside quoted values (e.g. "https://...") are preserved.
-    private static string StripJsonComments(string json)
+    // Internal (not private) so external module.json files get the same JSON5
+    // tolerance as config.json (Phase 4): the agent authors them the same way.
+    internal static string StripJsonComments(string json)
     {
         var sb = new System.Text.StringBuilder(json.Length);
         bool inString = false;
