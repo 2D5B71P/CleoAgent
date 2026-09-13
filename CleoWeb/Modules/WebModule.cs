@@ -29,27 +29,29 @@ internal sealed class WebModule : IModule
         "web",
         "1.0.0",
         "HTTP fetch + search: web_fetch, web_search (local readability, jina, " +
-        "duckduckgo providers via the [web] config section).",
-        configSection: "web",
+        "duckduckgo providers via the [modules.web] config section).",
         modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {
         ConfigSection cfg = ctx.Config;
 
+        // Structured config: fetch and search are sub-blocks of [modules.web]
+        // ("modules.web.fetch.*" / "modules.web.search.*"), each with their
+        // own provider + fallback + optional API key.
         var fetch = new FetchConfig(
-            cfg.GetInt("request_timeout_s", FetchConfig.Default.RequestTimeoutS),
-            cfg.GetInt("max_chars", FetchConfig.Default.MaxChars),
-            cfg.GetString("provider", FetchConfig.Default.Provider),
-            cfg.GetString("provider_fallback", FetchConfig.Default.ProviderFallback),
-            cfg.GetString("provider_api_key", FetchConfig.Default.ProviderApiKey),
-            cfg.GetString("fallback_provider_api_key", FetchConfig.Default.FallbackProviderApiKey));
+            cfg.GetIntAt("fetch", "request_timeout_s", FetchConfig.Default.RequestTimeoutS),
+            cfg.GetIntAt("fetch", "max_chars", FetchConfig.Default.MaxChars),
+            cfg.GetStringAt("fetch", "provider", FetchConfig.Default.Provider),
+            cfg.GetStringAt("fetch", "provider_fallback", FetchConfig.Default.ProviderFallback),
+            cfg.GetStringAt("fetch", "provider_api_key", FetchConfig.Default.ProviderApiKey),
+            cfg.GetStringAt("fetch", "fallback_provider_api_key", FetchConfig.Default.FallbackProviderApiKey));
 
         var search = new SearchConfig(
-            cfg.GetString("provider", SearchConfig.Default.Provider),
-            cfg.GetString("provider_fallback", SearchConfig.Default.ProviderFallback),
-            cfg.GetString("provider_api_key", SearchConfig.Default.ProviderApiKey),
-            cfg.GetString("fallback_provider_api_key", SearchConfig.Default.FallbackProviderApiKey));
+            cfg.GetStringAt("search", "provider", SearchConfig.Default.Provider),
+            cfg.GetStringAt("search", "provider_fallback", SearchConfig.Default.ProviderFallback),
+            cfg.GetStringAt("search", "provider_api_key", SearchConfig.Default.ProviderApiKey),
+            cfg.GetStringAt("search", "fallback_provider_api_key", SearchConfig.Default.FallbackProviderApiKey));
 
         IFetchProvider? fetchPrimary = FetchProviderFactory.Create(fetch.Provider, _http, fetch.ProviderApiKey);
         IFetchProvider? fetchFallback = FetchProviderFactory.Create(fetch.ProviderFallback, _http, fetch.FallbackProviderApiKey);

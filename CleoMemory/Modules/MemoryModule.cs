@@ -30,18 +30,17 @@ internal sealed class MemoryModule : IModule
         "memory",
         "1.0.0",
         "Agent-driven semantic memory: memory_write, memory_retrieve, " +
-        "memory_forget, memory_clear (embeddings via the [embedding] config " +
-        "section; provider + repository published as services).",
-        configSection: "embedding",
+        "memory_forget, memory_clear (embeddings via the [modules.memory] " +
+        "config section; provider + repository published as services).",
         modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {
         ConfigSection cfg = ctx.Config;
 
-        // Embedding provider selection: same fields as the legacy [embedding]
-        // section - provider ("none" = local hash, "openai"/"openrouter" = API),
-        // model, api_key. Defaults match EmbeddingConfig.Default.
+        // Embedding provider selection: provider ("none" = local hash,
+        // "openai"/"openrouter" = API), model, api_key - read from the
+        // [modules.memory] config block. Defaults match EmbeddingConfig.Default.
         var embeddingConfig = new EmbeddingConfig(
             cfg.GetString("provider", EmbeddingConfig.Default.Provider),
             cfg.GetString("model", EmbeddingConfig.Default.Model),

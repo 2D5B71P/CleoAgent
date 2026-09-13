@@ -420,7 +420,7 @@ internal static class MemorySelfTest
           },
           /* block
              comment */
-          "embedding": { "provider": "none", "model": "", "api_key": "" },
+          "modules": { "memory": { "provider": "none", "model": "", "api_key": "" } },
           "compaction": {
             "keepRecentTurns": 20,
             "softTokenCeiling": 16000,
@@ -453,7 +453,7 @@ internal static class MemorySelfTest
                       && cfg.Model.Provider == "open_router"
                       && cfg.Model.Model == "openai/gpt-4o"
                       && cfg.Model.ApiKey == "sk-interpolated-123"
-                      && cfg.Embedding.Provider == "none"
+                      && Config.SectionString("modules.memory", "provider") == "none"
                       && cfg.Compaction.KeepRecentTurns == 20
                       && cfg.Compaction.SoftTokenCeiling == 16000
                       && cfg.Compaction.HardByteCeiling == 64000

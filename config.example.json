@@ -15,13 +15,54 @@
     "api_key": "***"
   },
 
-  "embedding": {
-    // none = offline hash fallback (deterministic, NOT semantically meaningful).
-    // Set "openai" or "openrouter" + model (e.g. text-embedding-3-small) + api_key
-    // for real retrieval.
-    "provider": "none",
-    "model": "",
-    "api_key": ""
+  // Modular capability configuration. Since the 2026-09-13 redesign every
+  // module owns its config under "modules.<id>" - the legacy top-level
+  // "embedding" / "web" sections are obsolete and ignored.
+  "modules": {
+    "memory": {
+      // Embedding provider: "none" = offline hash fallback (deterministic,
+      // NOT semantically meaningful). Set "openai" or "openrouter" + model
+      // (e.g. text-embedding-3-small) + api_key for real retrieval.
+      "provider": "none",
+      "model": "",
+      "api_key": ""
+    },
+    "web": {
+      // Modular web capability (web_fetch / web_search tools). Each surface
+      // is a provider + optional fallback, mirroring model/embedding
+      // providers.
+      //
+      // fetch.provider: "default" = our free local SmartReader-based
+      //   extractor (Mozilla Readability algorithm; no key, no cost).
+      //   Others: "jina" (https://r.jina.ai/<url>, renders JS).
+      // fetch.provider_fallback: tried only when the primary fails the
+      //   readability gate (JS-rendered page, anti-bot wall). "none"
+      //   disables fallback.
+      // search.provider: "jina" (https://s.jina.ai/<query>) or "duckduckgo"
+      //   (free, keyless but may be bot-blocked). More keyed providers
+      //   (brave/bing/tavily) can be added in the factory.
+      // Either variable may be "none" to disable that surface entirely.
+      //
+      // Optional API keys: most providers work keyless (rate-limited), but
+      // if a provider_api_key / fallback_provider_api_key is present the
+      // matching provider uses it (Bearer auth, better rate limits - jina
+      // benefits). Use ${ENV_VAR} interpolation; never paste a secret
+      // literal here.
+      "fetch": {
+        "request_timeout_s": 30,
+        "max_chars": 40000,
+        "provider": "default",
+        "provider_fallback": "none",
+        "provider_api_key": "",
+        "fallback_provider_api_key": ""
+      },
+      "search": {
+        "provider": "duckduckgo",
+        "provider_fallback": "none",
+        "provider_api_key": "",
+        "fallback_provider_api_key": ""
+      }
+    }
   },
 
   // Deliberate planning loop. When enabled, each user turn becomes:
@@ -33,39 +74,5 @@
     "maxToolCallsPerStep": 8,
     "replanOnToolError": true,
     "maxReplans": 2
-  },
-
-  // Modular web capability (web_fetch / web_search tools). Each surface is a
-  // provider + optional fallback, mirroring model/embedding providers.
-  //
-  // fetch.provider: "default" = our free local SmartReader-based extractor
-  //   (Mozilla Readability algorithm; no key, no cost). Others: "jina"
-  //   (https://r.jina.ai/<url>, renders JS).
-  // fetch.provider_fallback: tried only when the primary fails the readability
-  //   gate (JS-rendered page, anti-bot wall). "none" disables fallback.
-  // search.provider: "jina" (https://s.jina.ai/<query>) or "duckduckgo"
-  //   (free, keyless but may be bot-blocked). More keyed providers
-  //   (brave/bing/tavily) can be added in the factory.
-  // Either variable may be "none" to disable that surface entirely.
-  //
-  // Optional API keys: most providers work keyless (rate-limited), but if a
-  // provider_api_key / fallback_provider_api_key is present the matching
-  // provider uses it (Bearer auth, better rate limits - jina benefits). Use
-  // ${ENV_VAR} interpolation; never paste a secret literal here.
-  "web": {
-    "fetch": {
-      "request_timeout_s": 30,
-      "max_chars": 40000,
-      "provider": "default",
-      "provider_fallback": "none",
-      "provider_api_key": "",
-      "fallback_provider_api_key": ""
-    },
-    "search": {
-      "provider": "duckduckgo",
-      "provider_fallback": "none",
-      "provider_api_key": "",
-      "fallback_provider_api_key": ""
-    }
   }
 }

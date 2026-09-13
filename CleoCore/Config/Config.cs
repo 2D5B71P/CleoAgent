@@ -64,10 +64,10 @@ internal sealed record PlanningConfig(
 // provider + optional fallback, mirroring how model/embedding providers are
 // selected — "default" is our free local implementation and "none" disables.
 //
-//   "web": {
+//   "modules": { "web": {
 //     "fetch":  { "request_timeout_s": 30, "max_chars": 40000, "provider": "default", "provider_fallback": "jina" },
 //     "search": { "provider": "duckduckgo" }
-//   }
+//   } }
 //
 // request_timeout_s bounds each fetch; max_chars caps the markdown handed back
 // to the model (context-window guard). provider_fallback is tried only when the
@@ -92,30 +92,17 @@ internal sealed record SearchConfig(
     public static SearchConfig Default => new("duckduckgo", "none", "", "");
 }
 
-internal sealed record WebConfig(
-    FetchConfig Fetch,
-    SearchConfig Search)
-{
-    public static WebConfig Default => new(FetchConfig.Default, SearchConfig.Default);
-}
-
-internal sealed record SectionPresence(bool ModuleOwned, bool LegacyPresent);
-
 internal sealed record AppConfig(
     AgentConfig Agent,
     ModelConfig Model,
-    EmbeddingConfig Embedding,
     CompactionConfig Compaction,
-    PlanningConfig Planning,
-    WebConfig Web)
+    PlanningConfig Planning)
 {
     public static AppConfig Default => new(
         AgentConfig.Default,
         ModelConfig.Default,
-        EmbeddingConfig.Default,
         CompactionConfig.Default,
-        PlanningConfig.Default,
-        WebConfig.Default);
+        PlanningConfig.Default);
 }
 
 internal static class Config
@@ -184,17 +171,6 @@ internal static class Config
                 };
             }
 
-            if (TrySection(root, "embedding", out JsonElement embedding))
-            {
-                result = result with
-                {
-                    Embedding = new EmbeddingConfig(
-                        ReadString(embedding, "provider", result.Embedding.Provider),
-                        ReadString(embedding, "model", result.Embedding.Model),
-                        ReadString(embedding, "api_key", result.Embedding.ApiKey))
-                };
-            }
-
             if (TrySection(root, "compaction", out JsonElement compaction))
             {
                 var compactionConfig = result.Compaction;
@@ -234,49 +210,6 @@ internal static class Config
 
                 result = result with { Planning = planningConfig };
             }
-            if (TrySection(root, "web", out JsonElement web))
-            {
-                var webConfig = result.Web;
-
-                if (TrySection(web, "fetch", out JsonElement fetch))
-                {
-                    var fetchConfig = webConfig.Fetch;
-
-                    if (fetch.TryGetProperty("request_timeout_s", out JsonElement rt) && rt.ValueKind == JsonValueKind.Number)
-                        fetchConfig = fetchConfig with { RequestTimeoutS = Math.Max(1, rt.GetInt32()) };
-
-                    if (fetch.TryGetProperty("max_chars", out JsonElement mc) && mc.ValueKind == JsonValueKind.Number)
-                        fetchConfig = fetchConfig with { MaxChars = Math.Max(1, mc.GetInt32()) };
-
-                    if (fetch.TryGetProperty("provider", out JsonElement fp))
-                        fetchConfig = fetchConfig with { Provider = ReadString(fetch, "provider", fetchConfig.Provider) };
-
-                    if (fetch.TryGetProperty("provider_fallback", out JsonElement pf))
-                        fetchConfig = fetchConfig with { ProviderFallback = ReadString(fetch, "provider_fallback", fetchConfig.ProviderFallback) };
-
-                    if (fetch.TryGetProperty("provider_api_key", out JsonElement pak))
-                        fetchConfig = fetchConfig with { ProviderApiKey = ReadString(fetch, "provider_api_key", fetchConfig.ProviderApiKey) ?? "" };
-
-                    if (fetch.TryGetProperty("fallback_provider_api_key", out JsonElement fpak))
-                        fetchConfig = fetchConfig with { FallbackProviderApiKey = ReadString(fetch, "fallback_provider_api_key", fetchConfig.FallbackProviderApiKey) ?? "" };
-
-                    webConfig = webConfig with { Fetch = fetchConfig };
-                }
-
-                if (TrySection(web, "search", out JsonElement search))
-                {
-                    var searchConfig = webConfig.Search;
-
-                    searchConfig = searchConfig with { Provider = ReadString(search, "provider", searchConfig.Provider) };
-                    searchConfig = searchConfig with { ProviderFallback = ReadString(search, "provider_fallback", searchConfig.ProviderFallback) };
-                    searchConfig = searchConfig with { ProviderApiKey = ReadString(search, "provider_api_key", searchConfig.ProviderApiKey) ?? "" };
-                    searchConfig = searchConfig with { FallbackProviderApiKey = ReadString(search, "fallback_provider_api_key", searchConfig.FallbackProviderApiKey) ?? "" };
-
-                    webConfig = webConfig with { Search = searchConfig };
-                }
-
-                result = result with { Web = webConfig };
-            }
         }
         catch (JsonException)
         {
@@ -287,8 +220,9 @@ internal static class Config
     }
 
     // ---- module config surface (Phase 2) ----------------------------------
-    // Each module reads its own section through ConfigSection (module-owned
-    // "modules.<id>" block first, legacy top-level section as fallback). The
+    // Each module reads its own section through ConfigSection — the
+    // module-owned "modules.<id>" block (since 2026-09-13 the ONLY surface;
+    // legacy top-level fallback removed). The
     // accessors below re-parse per call: config.json is tiny and read at boot,
     // so caching buys nothing and would risk staleness under test overrides.
 
@@ -348,37 +282,25 @@ internal static class Config
         return false;
     }
 
-    // Whether the legacy root section and/or the module-owned "modules.<id>"
-    // block exist (as objects) in the current config file.
-    public static SectionPresence SectionInfo(string legacyName, string moduleId)
+    // Whether the module-owned "modules.<id>" block exists (as an object) in
+    // the current config file. 2026-09-13: this is the ONLY config surface;
+    // the legacy top-level sections were removed with the pre-modular config.
+    public static bool SectionExists(string sectionPath)
     {
         string? valid = RawJsonText();
         if (valid is null)
         {
-            return new SectionPresence(false, false);
+            return false;
         }
 
         try
         {
             using JsonDocument document = JsonDocument.Parse(valid);
-            JsonElement root = document.RootElement;
-
-            bool legacy = root.TryGetProperty(legacyName, out JsonElement legacySection)
-                && legacySection.ValueKind == JsonValueKind.Object;
-
-            bool owned = false;
-            if (root.TryGetProperty("modules", out JsonElement modulesSection)
-                && modulesSection.ValueKind == JsonValueKind.Object)
-            {
-                owned = modulesSection.TryGetProperty(moduleId, out JsonElement moduleSection)
-                    && moduleSection.ValueKind == JsonValueKind.Object;
-            }
-
-            return new SectionPresence(owned, legacy);
+            return ResolveSection(document.RootElement, sectionPath, out _);
         }
         catch (JsonException)
         {
-            return new SectionPresence(false, false);
+            return false;
         }
     }
 

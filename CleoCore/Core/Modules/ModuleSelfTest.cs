@@ -11,7 +11,8 @@ namespace CleoAgent.Core.Modules;
 // Kernel self-test for the module contract (design s9): manifest validation,
 // dependency-order loading, unknown-requires refusal, tool-name collision
 // with rollback, load/unload round-trip, service registry, config-section
-// legacy fallback. Invoked via `--selftest`; a failure here refuses nothing
+// module-owned resolution + nested sub-block reads (no legacy fallback since
+// 2026-09-13). Invoked via `--selftest`; a failure here refuses nothing
 // at boot (fail-closed wiring arrives with external modules) but must be
 // fixed before the Phase 2 gate closes.
 internal static class ModuleSelfTest
@@ -158,7 +159,10 @@ internal static class ModuleSelfTest
 
     private static async Task TestConfigSectionAsync()
     {
-        // Legacy top-level section fallback + module-owned precedence.
+        // Module-owned [modules.<id>] is the ONLY config surface since
+        // 2026-09-13 (legacy top-level sections were removed). Verify the
+        // block resolves, absent blocks are unconfigured, and nested sub-block
+        // reads (web fetch/search shape) work.
         string root = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "cleoagent_moduleselftest_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -166,8 +170,13 @@ internal static class ModuleSelfTest
 
         File.WriteAllText(configPath,
             "{\n" +
-            "  \"embedding\": { \"provider\": \"hashish\", \"api_key\": \"legacy-key\" },\n" +
-            "  \"modules\": { \"embedding\": { \"provider\": \"owned\", \"api_key\": \"owned-key\" } }\n" +
+            "  \"modules\": {\n" +
+            "    \"memory\": { \"provider\": \"hashish\", \"api_key\": \"legacy-key\" },\n" +
+            "    \"web\": {\n" +
+            "      \"fetch\": { \"provider\": \"jina\", \"max_chars\": 12345 },\n" +
+            "      \"search\": { \"provider\": \"duckduckgo\" }\n" +
+            "    }\n" +
+            "  }\n" +
             "}\n");
 
         string? previousOverride = CleoAgent.Core.Config.Config.ConfigPathOverride;
@@ -175,32 +184,33 @@ internal static class ModuleSelfTest
         {
             CleoAgent.Core.Config.Config.ConfigPathOverride = configPath;
 
-            // Module-owned [modules.embedding] block wins over the legacy
-            // top-level [embedding] section.
-            var owned = ConfigSection.ForModule("embedding", "embedding");
-            bool ownedWins = owned is not null
-                && owned.GetString("provider") == "owned"
-                && owned.GetString("api_key") == "owned-key"
-                && owned.IsConfigured;
+            // modules.memory block resolves with its keys.
+            var memory = ConfigSection.ForModule("memory");
+            bool memoryOk = memory is not null
+                && memory.GetString("provider") == "hashish"
+                && memory.GetString("api_key") == "legacy-key"
+                && memory.IsConfigured;
 
-            // A module with no [modules.<id>] block falls back to its legacy
-            // top-level section.
-            var legacy = ConfigSection.ForModule("memory", "embedding");
-            bool legacyFallsBack = legacy is not null
-                && legacy.GetString("provider") == "hashish"
-                && legacy.GetString("api_key") == "legacy-key"
-                && legacy.IsConfigured;
+            // modules.web fetch/search sub-blocks resolve via the dotted reads.
+            var web = ConfigSection.ForModule("web");
+            bool webOk = web is not null
+                && web.GetStringAt("fetch", "provider") == "jina"
+                && web.GetIntAt("fetch", "max_chars", 0) == 12345
+                && web.GetStringAt("search", "provider") == "duckduckgo"
+                && web.IsConfigured;
 
-            // Modules without a config surface get null from ForModule (the
-            // caller substitutes ConfigSection.Empty); assert the contract.
-            var empty = ConfigSection.ForModule("devtools", null);
-            bool emptySafe = empty is null;
+            // A module with no [modules.<id>] block is unconfigured, never null
+            // (the caller substitutes ConfigSection.Empty); reads fall back.
+            var empty = ConfigSection.ForModule("devtools");
+            bool emptySafe = empty is not null
+                && !empty.IsConfigured
+                && empty.GetString("provider", "fallback") == "fallback";
 
-            Console.WriteLine(ownedWins && legacyFallsBack && emptySafe
-                ? "  OK: config section module-owned precedence + legacy fallback + empty."
+            Console.WriteLine(memoryOk && webOk && emptySafe
+                ? "  OK: config section module-owned only + nested sub-block reads + empty."
                 : string.Format(
-                    "  FAIL: config section. owned={0}, legacy={1}, empty={2}",
-                    ownedWins, legacyFallsBack, emptySafe));
+                    "  FAIL: config section. memory={0}, web={1}, empty={2}",
+                    memoryOk, webOk, emptySafe));
         }
         finally
         {
@@ -717,7 +727,7 @@ internal sealed class FakeModule : IModule
         _loadLog = loadLog;
         _manifest = ModuleManifest.Create(
             id, "1.0.0", "fake test module", requires, toolNames,
-            null, defaultActive, modelRequestable);
+            defaultActive, modelRequestable);
     }
 
     public ModuleManifest Manifest() => _manifest;

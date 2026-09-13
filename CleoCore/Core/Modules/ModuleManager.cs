@@ -168,21 +168,7 @@ internal sealed class ModuleManager
             await LoadModuleAsync(id, visited, failures, cancellationToken);
         }
 
-        // One-time startup deprecation notes for modules using legacy config.
-        foreach (string id in _order)
-        {
-            if (!_registered.TryGetValue(id, out var module))
-            {
-                continue;
-            }
-
-            ConfigSection? config = ConfigSection.ForModule(
-                module.Manifest().Id,
-                module.Manifest().ConfigSection);
-            config?.WarnIfLegacy();
-        }
-
-        return failures;
+return failures;
     }
 
     // ---- external module discovery (Phase 4) -----------------------------
@@ -619,7 +605,7 @@ internal sealed class ModuleManager
                 _hostContext.Services,
                 _hostContext.AgentId,
                 _hostContext.AgentsRoot,
-                ConfigSection.ForModule(module.Manifest().Id, module.Manifest().ConfigSection));
+                ConfigSection.ForModule(module.Manifest().Id));
 
             List<string> toolsBefore = _hostContext.Tools.Names.ToList();
             servicesBefore = _hostContext.Services.Names.ToList();

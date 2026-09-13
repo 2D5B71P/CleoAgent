@@ -5,75 +5,55 @@ using CleoAgent.Core.Config;
 
 namespace CleoAgent.Core.Modules;
 
-// A module's view over config.json. Resolution order (design s8):
-//   1. module-owned keys: the "modules.<id>" top-level block, if present;
-//   2. legacy fallback: the manifest's ConfigSection name at the root
-//      ("embedding", "web") - works with existing config files.
-// When the legacy path is actually consulted, WarnIfLegacy() emits a one-time
-// startup deprecation note. Missing sections are fine (defaults apply); zero
-// config behaves exactly like today.
+// A module's view over config.json. Since 2026-09-13 the module-owned
+// "modules.<id>" block is the ONLY config surface - the legacy top-level
+// sections ("embedding", "web") were removed with the pre-modular config.
+// Missing sections are fine (defaults apply); zero config behaves exactly
+// like today.
 internal sealed class ConfigSection
 {
-    private readonly string _moduleId;
-    private readonly string? _legacyName;
-    private readonly string _activeSection;   // dotted path actually read (e.g. "modules.memory" or "embedding")
-    private readonly bool _usedLegacy;        // true when the legacy root section was the source
-    private readonly bool _configured;        // true when any section resolved
+    private readonly string _sectionPath;   // "modules.<id>" actually read
+    private readonly bool _configured;      // true when the section exists
 
-    private ConfigSection(string moduleId, string? legacyName, string activeSection, bool usedLegacy, bool configured)
+    private ConfigSection(string sectionPath, bool configured)
     {
-        _moduleId = moduleId;
-        _legacyName = legacyName;
-        _activeSection = activeSection;
-        _usedLegacy = usedLegacy;
+        _sectionPath = sectionPath;
         _configured = configured;
     }
 
     // Read-only empty section for modules with no declared config surface so
     // ModuleContext.Config never needs null handling.
-    public static ConfigSection Empty => new("", null, "", false, false);
+    public static ConfigSection Empty => new("", false);
 
-    // Builds the section for a module manifest. Returns null when the module
-    // declares no config surface (legacyName null) - nothing to read.
-    public static ConfigSection? ForModule(string moduleId, string? legacyName)
+    // Builds the section for a module manifest. Every module's config lives at
+    // "modules.<id>" - no fallback to a legacy root section anymore.
+    public static ConfigSection? ForModule(string moduleId)
     {
-        if (legacyName is null)
-        {
-            return null;
-        }
-        var info = CleoAgent.Core.Config.Config.SectionInfo(legacyName, moduleId);
-
-        bool moduleOwned = info.ModuleOwned;
-        bool legacyPresent = info.LegacyPresent;
-
-        return new ConfigSection(
-            moduleId,
-            legacyName,
-            moduleOwned ? "modules." + moduleId : legacyName,
-            /* usedLegacy: */ !moduleOwned && legacyPresent,
-            /* configured:  */ moduleOwned || legacyPresent);
+        string path = "modules." + moduleId;
+        return new ConfigSection(path, CleoAgent.Core.Config.Config.SectionExists(path));
     }
 
     public bool IsConfigured => _configured;
 
     public string GetString(string key, string fallback = "") =>
-        CleoAgent.Core.Config.Config.SectionString(_activeSection, key) ?? fallback;
+        CleoAgent.Core.Config.Config.SectionString(_sectionPath, key) ?? fallback;
 
     public int GetInt(string key, int fallback) =>
-        CleoAgent.Core.Config.Config.SectionInt(_activeSection, key) ?? fallback;
+        CleoAgent.Core.Config.Config.SectionInt(_sectionPath, key) ?? fallback;
 
     public bool GetBool(string key, bool fallback) =>
-        CleoAgent.Core.Config.Config.SectionBool(_activeSection, key) ?? fallback;
+        CleoAgent.Core.Config.Config.SectionBool(_sectionPath, key) ?? fallback;
 
-    // Emits the one-time startup deprecation note when this module fell back
-    // to a legacy top-level section. Called by ModuleManager after LoadAll.
-    public void WarnIfLegacy()
-    {
-        if (_usedLegacy)
-        {
-            Console.Error.WriteLine(
-                $"[config] module \"{_moduleId}\": using legacy top-level " +
-                $"\"{_legacyName}\" section - migrate to \"modules.{_moduleId}\" (deprecation).");
-        }
-    }
+    // Reads a key inside a nested sub-block of the module's section:
+    //   cfg.GetStringAt("fetch", "provider") -> "modules.web.fetch.provider"
+    // Keeps "modules.<id>" as the section root while allowing structured
+    // sub-blocks (the web module's fetch/search split).
+    public string GetStringAt(string subPath, string key, string fallback = "") =>
+        CleoAgent.Core.Config.Config.SectionString(_sectionPath + "." + subPath, key) ?? fallback;
+
+    public int GetIntAt(string subPath, string key, int fallback) =>
+        CleoAgent.Core.Config.Config.SectionInt(_sectionPath + "." + subPath, key) ?? fallback;
+
+    public bool GetBoolAt(string subPath, string key, bool fallback) =>
+        CleoAgent.Core.Config.Config.SectionBool(_sectionPath + "." + subPath, key) ?? fallback;
 }

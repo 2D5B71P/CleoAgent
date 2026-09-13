@@ -134,53 +134,6 @@ namespace CleoAgent.CLI
             tools.Register(new ModuleEnableTool(moduleManager));
             tools.Register(new ModuleDisableTool(moduleManager));
 
-            /* Deprecate (2026-09-13): hand-wired composition replaced by the
-               module system (Phase 2). Kept for rollback safety - do not
-               re-enable without checking DESIGN-modules.md first.
-            // Agent-driven memory: the agent writes, forgets and retrieves at will
-            // via the memory_* tools (registered below). Nothing is auto-injected.
-
-            // Modular web capability: providers selected from the [web] config
-            // section via the same factory pattern as model/embedding providers.
-            // "none" (default fallback) resolves to null -> that surface just
-            // reports it is unconfigured (no external cost).
-            IFetchProvider? fetchPrimary    = FetchProviderFactory.Create(config.Web.Fetch.Provider, s__Client, config.Web.Fetch.ProviderApiKey);
-            IFetchProvider? fetchFallback   = FetchProviderFactory.Create(config.Web.Fetch.ProviderFallback, s__Client, config.Web.Fetch.FallbackProviderApiKey);
-            ISearchProvider? searchPrimary  = SearchProviderFactory.Create(config.Web.Search.Provider, s__Client, config.Web.Search.ProviderApiKey);
-            ISearchProvider? searchFallback = SearchProviderFactory.Create(config.Web.Search.ProviderFallback, s__Client, config.Web.Search.FallbackProviderApiKey);
-
-            // Filled in by AgentLoop once the first model completion reveals the
-            // run's session id; lets session tools resolve the "current" pseudo-id.
-            var sessionHandle = new SessionIdHandle();
-
-            ToolRegistry tools = new (
-                new RunCommandTool(),
-                new ReadFileTool(), 
-                new WriteFileTool(),
-                new ListDirectoryTool(),
-                new GrepTool(),
-                new GetEnvironmentInfoTool(),
-                new RemoveFileTool(),
-                new MoveFileTool(),
-                new RenameFileTool(),
-                new MakeDirectoryTool(),
-                new RemoveDirectoryTool(),
-                new EditFileInplaceTool(),
-                new WebFetchTool(config.Web.Fetch, fetchPrimary, fetchFallback),
-                new WebSearchTool(config.Web.Search, searchPrimary, searchFallback),
-                new MemoryWriteTool(memory, embedding),
-                new MemoryRetrieveTool(memory, embedding),
-                new MemoryForgetTool(memory, embedding),
-                new MemoryClearTool(memory),
-                new ListSessionsTool(config.Agent.Id, sessionHandle),
-                new SearchSessionLogsTool(config.Agent.Id, sessionHandle),
-                new ReadSessionLogTool(config.Agent.Id, sessionHandle),
-                new NameSessionTool(config.Agent.Id, sessionHandle),
-                new WorkClaimTool(config.Agent.Id, sessionHandle),
-                new WorkStatusTool(),
-                new WorkEndTool(config.Agent.Id, sessionHandle)
-            );
-            */
             var agent = new AgentLoop(
                 modelProvider,
                 tools,

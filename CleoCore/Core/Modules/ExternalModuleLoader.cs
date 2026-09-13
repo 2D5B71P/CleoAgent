@@ -277,7 +277,6 @@ internal static class ExternalModuleLoader
                 description,
                 requires: requires,
                 provides: provides,
-                configSection: null,
                 defaultActive: defaultActive,
                 modelRequestable: modelRequestable,
                 author: author,

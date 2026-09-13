@@ -39,9 +39,9 @@ internal sealed class ModuleContext
     // for other modules / future phases to consume by name.
     public ServiceRegistry Services => _services;
 
-    // This module's config section (module-owned keys first, legacy top-level
-    // section as fallback). Empty when the manifest declares no config surface,
-    // so module code never null-checks it.
+    // This module's config section: the module-owned "modules.<id>" block
+    // (2026-09-13: the legacy top-level fallback was removed). Empty when the
+    // section is absent, so module code never null-checks it.
     public ConfigSection Config => _config ?? ConfigSection.Empty;
 
     public string AgentId => _agentId;

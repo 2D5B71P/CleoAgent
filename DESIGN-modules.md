@@ -8,7 +8,10 @@ allowed (no user approval gate). Open questions (§11) all answered 2026-09-13 �
 see resolutions below. Implemented through Phase 4 (2026-09-13): Phases 1-2
 committed (bd54297, 666b3bc); Phase 3 committed (module allowlist + model-
 requestable logical activation, live-verified); Phase 4 committed (external
-agent-authored modules, script-backed + out-of-process, live-verified).
+agent-authored modules, script-backed + out-of-process, live-verified). 2026-09-13
+v0.2.0: deprecated blocks REMOVED (user-authorized); legacy pre-modular config
+sections deleted — `modules.<id>` is the only config surface (live config
+migrated, boot deprecation notes gone).
 
 ---
 
@@ -291,16 +294,18 @@ decision — not a silent widening of tier 2.
 | devtools | CleoCore    | run_command, read/write_file, list_directory, grep, get_environment_info, remove/move/rename_file, make/remove_directory, edit_file_inplace | (none)                   | (none — core)   |
 | session  | CleoCore    | list/search/read/name_session              | (none)                   | (none)          |
 | work     | CleoCore    | work_claim/status/end                      | (none)                   | (none)          |
-| memory   | CleoMemory  | memory_write/retrieve/forget/clear         | `memory`, `embedding`    | `[embedding]`   |
-| web      | CleoWeb     | web_fetch, web_search                      | (none)                   | `[web]`         |
+| memory   | CleoMemory  | memory_write/retrieve/forget/clear         | `memory`, `embedding`    | `modules.memory` |
+| web      | CleoWeb     | web_fetch, web_search                      | (none)                   | `modules.web`   |
 | *(external)* | on-disk  | whatever the module declares               | whatever it publishes    | own `module.json` |
 
-Config ownership moves with the module: `[embedding]` lives in CleoMemory's
-config surface, `[web]` in CleoWeb's. **Backward compat:** legacy top-level key
-locations (`"embedding"`, `"web"` at root of the config file) keep working —
-each module's `ConfigSection` resolves module-owned keys first, then falls back
-to the legacy location with a startup deprecation note. No config rewrite
-needed; the live `%APPDATA%\CleoAgent\config.json` keeps working.
+Config ownership lives with the module: `modules.memory` in CleoMemory's
+config surface, `modules.web` in CleoWeb's. **2026-09-13:** the legacy
+pre-modular sections (`"embedding"`, `"web"` at root of the config file) are
+OBSOLETE and were removed — `modules.<id>` is the only config surface (the
+startup deprecation notes are gone with it). The web module reads structured
+sub-blocks: `modules.web.fetch.*` / `modules.web.search.*` (dotted accessors
+`GetStringAt("fetch", ...)`). The live `%APPDATA%\CleoAgent\config.json` was
+migrated in the same change.
 
 ---
 
@@ -337,8 +342,10 @@ needed; the live `%APPDATA%\CleoAgent\config.json` keeps working.
 - Convert each capability area into the module wrappers; `Program.cs` becomes:
   load config → build host → `ModuleManager.LoadAll(config)` → run loop.
   No tool behavior changes; all defaults `true`.
-- Old hand-wired composition path: **commented out with a `# Deprecate (date)`
-  header block, NOT deleted** (house rule).
+- Old hand-wired composition path: was kept as a commented `# Deprecate (date)`
+  block per the house rule; **removed 2026-09-13** once the module system had
+  been live-verified (Phases 2-4) — the user authorized deleting deprecated
+  blocks, so rollback now means the git history, not a comment.
 - Exit gate: same as Phase 1, plus `module_status` shows all 5 active and
   definitions equal today's set.
 
