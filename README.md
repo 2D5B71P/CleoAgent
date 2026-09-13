@@ -55,7 +55,7 @@ implemented and live-verified. See [v0.1.0 release](https://github.com/2D5B71P/C
 ## Quick start
 
 ```bash
-# 1. Build
+# 1. Build (solution: CleoCore + CleoMemory + CleoWeb + CleoCLI)
 dotnet build -c Debug
 
 # 2. Configure (outside the repo, never committed)
@@ -63,10 +63,10 @@ dotnet build -c Debug
 #    Create %APPDATA%\CleoAgent\config.json  (see config.example.json)
 
 # 3. Run the agent
-dotnet run -c Debug --project CleoAgent.csproj
+.\CleoCLI\bin\Debug\net10.0\CleoAgent.exe
 
 # 4. Memory/session self-test
-dotnet run -c Debug --project CleoAgent.csproj -- --selftest
+.\CleoCLI\bin\Debug\net10.0\CleoAgent.exe --selftest
 ```
 
 ## Configuration
@@ -84,18 +84,38 @@ Sections:
 API keys are **strictly** resolved from `config.*.api_key` (themselves usually
 `${ENV_VAR}` tokens) — never pasted into the repo.
 
-## Layout
+## Layout (modular — 2026-09-13 restructure)
 
-- `CLI/` — REPL entry point (`Program.cs`), `MemorySelfTest`.
-- `Core/Agent/` — `AgentLoop`, events.
-- `Core/Context/` — `ContextEngine` + `IContextSource` (system, workspace,
-  memory).
-- `Core/Memory/` — repository, embeddings, summarizer, reflection.
-- `Core/Session/` — `SessionMessage`, `SessionStore` (JSONL + `sessions.json`
-  display index), `SessionIdHandle` (live "current" session id).
-- `Core/Model/` — provider interfaces + OpenAI/OpenRouter providers, factories.
-- `Core/Tools/` — tool registry + implementations.
-- `Core/Config/` — config loading (comments + `${VAR}` interpolation).
+One solution (`CleoAgent.slnx`), four projects. Multi-project is a build-time
+shape only: no runtime plugin loading, no behavior change vs the old
+single-project host. Each module project depends on `CleoCore` only; the CLI
+is the sole project that composes more than one module. (See
+DESIGN-modules.md for the full module-system design.)
+
+- `CleoCore/` — host kernel + core modules. `CleoCore.csproj`
+  - `Agent/` — `AgentLoop`, events, planner.
+  - `Context/` — `ContextEngine` + `IContextSource` (system, workspace).
+  - `Config/` — config records + loader (comments + `${VAR}` interpolation).
+  - `Env/` — environment loader.
+  - `Model/` — provider interfaces + OpenAI/OpenRouter/Google providers, factory.
+  - `Session/` — `SessionMessage`, `SessionStore` (JSONL + `sessions.json`
+    display index), `SessionIdHandle` (live "current" session id).
+  - `Tools/` — tool registry + devtools / session / work tools.
+  - `Work/` — work-board state store.
+- `CleoMemory/` — the memory module. `CleoMemory.csproj`
+  - `Memory/` — `IMemoryRepository` (+ file / in-memory impls), documents.
+  - `Embedding/` — embedding providers + factory.
+  - `Tools/` — `memory_write/retrieve/forget/clear`.
+  - `Context/` — `MemorySource` (dormant by design: zero auto-injection).
+  - `MemorySelfTest.cs` — the memory capability's self-test.
+- `CleoWeb/` — the web module. `CleoWeb.csproj`
+  - `Fetch/` — fetch providers + factory (SmartReader/ReverseMarkdown local,
+    jina). `Search/` — search providers + factory (jina, duckduckgo).
+  - `Tools/` — `web_fetch` / `web_search`.
+- `CleoCLI/` — the executable. `CleoAgent.csproj` (output binary:
+  `CleoAgent.exe`) — REPL entry point (`Program.cs`).
+- `tools/WebFetchProbe/` — standalone git-ignored probe; compiles the web
+  provider sources directly (paths track the module layout).
 
 ## Roadmap (not yet built)
 

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CleoCore = host kernel + core modules (devtools, session, work).
+       Depends on nothing but the stdlib; module projects depend on this one. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>False</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- Kernel internals (config types, tool contracts, session store, provider
+       interfaces) stay internal but must be reachable from the module projects
+       and the CLI, exactly as they were in the single-project layout. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="CleoAgent" />
+    <InternalsVisibleTo Include="CleoMemory" />
+    <InternalsVisibleTo Include="CleoWeb" />
+  </ItemGroup>
+
+</Project>

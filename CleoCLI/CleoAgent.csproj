@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CleoCLI = the executable: REPL entry point (Program.cs). Named
+       CleoAgent.csproj so the produced binary stays CleoAgent.exe (and stays
+       the module name other projects' InternalsVisibleTo targets reference).
+       Depends on all module projects; the only project that imports from more
+       than one of them. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>False</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CleoCore\CleoCore.csproj" />
+    <ProjectReference Include="..\CleoMemory\CleoMemory.csproj" />
+    <ProjectReference Include="..\CleoWeb\CleoWeb.csproj" />
+  </ItemGroup>
+
+</Project>

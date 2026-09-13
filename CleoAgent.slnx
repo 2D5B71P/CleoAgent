@@ -1,3 +1,6 @@
 <Solution>
-  <Project Path="CleoAgent.csproj" />
+  <Project Path="CleoCore/CleoCore.csproj" />
+  <Project Path="CleoMemory/CleoMemory.csproj" />
+  <Project Path="CleoWeb/CleoWeb.csproj" />
+  <Project Path="CleoCLI/CleoAgent.csproj" />
 </Solution>
