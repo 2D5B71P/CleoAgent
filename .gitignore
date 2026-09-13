@@ -12,9 +12,11 @@ obj/
 env.example.bak
 
 # Never commit secrets or local state (these live outside the repo at %APPDATA%\CleoAgent)
-.env
-env
-config.json
+# Root-anchored: "env" and "config.json" as loose patterns would swallow
+# CleoCore/Env/ (EnvLoader.cs is tracked source!) and any nested config.json.
+/.env
+/env
+/config.json
 
 # Local scratch harnesses (WebFetchProbe et al.) — probe sources stay on disk, out of git
 /tools/
