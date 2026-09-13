@@ -26,7 +26,8 @@ internal sealed class WorkModule : IModule
         "work",
         "1.0.0",
         "Concurrent-session coordination: work_claim, work_status, work_end " +
-        "(project-local edit-collision blackboard).");
+        "(project-local edit-collision blackboard).",
+        modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {

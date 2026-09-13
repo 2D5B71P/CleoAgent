@@ -6,19 +6,19 @@ using CleoAgent.Core.Modules;
 namespace CleoAgent.Core.Tools.Impl;
 
 // Kernel tool (always on, never unloadable): reports WHY each module is in
-// its state. Phase 2 has no operator/model activation - every registered
-// built-in is active by default, so the reason is "registered builtin,
-// default-active". Phase 3 fills in config-default vs model-requested as
-// the real causes.
+// its state (config default / model request / operator deny / load failure /
+// pending next-turn change). This is the diagnostic companion to list_modules
+// and the place the model checks before calling module_enable/module_disable.
 internal sealed class ModuleStatusTool : IAgentTool
 {
     private readonly ModuleManager _manager;
 
     public string Name => "module_status";
     public string Description =>
-        "Reports why each capability module is in its state (active or not). " +
-        "Use before enabling/disabling a module to understand the current " +
-        "configuration.";
+        "Reports why each capability module is in its state (active or not): " +
+        "config default, model request (pending or applied), operator " +
+        "allowlist deny, or load failure. Use this before enabling/disabling " +
+        "a module to understand its current configuration.";
     public string ParametersJson =>
         """
         {
@@ -51,24 +51,11 @@ internal sealed class ModuleStatusTool : IAgentTool
         {
             sb.Append("[module] ").Append(status.Id).Append(": ")
               .Append(status.Active ? "active" : "inactive").Append(" - ")
-              .AppendLine(Reason(status));
+              .AppendLine(status.Reason);
         }
 
         return new ToolResult(call.Id, sb.ToString().TrimEnd());
     }
 
     public string Describe(ToolCall call) => "Reporting module status";
-
-    private static string Reason(ModuleStatus status)
-    {
-        if (!status.Active)
-        {
-            return "not loaded (failed or not registered for load)";
-        }
-        if (!status.Manifest.ModelRequestable)
-        {
-            return "registered builtin, always on (not model-requestable)";
-        }
-        return "registered builtin, default-active";
-    }
 }

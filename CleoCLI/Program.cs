@@ -83,22 +83,15 @@ namespace CleoAgent.CLI
                 new WorkspaceInstructionsSource()
             });
 
-            IModelProvider modelProvider = ModelProviderFactory.Create(
-                config.Model, context, s__Client, agentId, config.Compaction);
-
-            // Data-driven composition (module system, Phase 2): every tool set is
-            // registered by its module into the shared registry. The host kernel
-            // (context engine, model provider, session handle) is built here; the
-            // old hand-wired composition is preserved below as a commented block
-            // (house rule: never delete, Deprecate).
-
             // Filled in by AgentLoop once the first model completion reveals the
             // run's session id; lets session tools resolve the "current" pseudo-id.
             var sessionHandle = new SessionIdHandle();
 
             ToolRegistry tools = new ();
             var services = new ServiceRegistry();
-            var moduleManager = new ModuleManager(new ModuleContext(tools, services, agentId, AgentPaths.AgentsRoot));
+            var moduleManager = new ModuleManager(
+                new ModuleContext(tools, services, agentId, AgentPaths.AgentsRoot),
+                ModuleAllowlist.LoadFromConfig(agentId, AgentPaths.AgentsRoot));
 
             moduleManager.Register(new DevtoolsModule());
             moduleManager.Register(new SessionModule(agentId, sessionHandle));
@@ -111,6 +104,15 @@ namespace CleoAgent.CLI
             {
                 Console.Error.WriteLine(failure);
             }
+
+            // Dormant-but-requestable modules are advertised in the system
+            // prompt so the model can request a capability; the source reads the
+            // live ModuleManager each turn (late registration is fine - the
+            // ContextEngine re-reads its source list per RenderAsync).
+            context.Register(new ModuleAdvertisementSource(moduleManager));
+
+            IModelProvider modelProvider = ModelProviderFactory.Create(
+                config.Model, context, s__Client, agentId, config.Compaction);
 
             // Kernel tools: always on, never unloadable, owned by the host.
             tools.Register(new ListModulesTool(moduleManager));
@@ -175,6 +177,17 @@ namespace CleoAgent.CLI
             // -----------------------------
             for (; ;)
             {
+                // Apply module enable/disable requests queued during the previous
+                // turn (design s6: logical activation takes effect NEXT turn - no
+                // mid-turn registry races). Failures here are load errors from an
+                // enable that queued fine but failed to load; module_status
+                // reports the reason.
+                var pendingFailures = await moduleManager.ApplyPendingAsync();
+                foreach (string failure in pendingFailures)
+                {
+                    Console.Error.WriteLine(failure);
+                }
+
                 cancelControl.Source = new CancellationTokenSource();
 
                 Console.ForegroundColor = ConsoleColor.DarkRed;

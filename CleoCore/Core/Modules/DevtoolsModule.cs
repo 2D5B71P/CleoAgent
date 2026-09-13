@@ -10,8 +10,8 @@ namespace CleoAgent.Core.Modules;
 
 // The devtools core module: file-management + command-execution tools. This
 // is the agent's "hands" - permanently on, NOT model-requestable (design:
-// resolving open question 2, 2026-09-13). An operator can still deny it per
-// agent via the allowlist when that lands (Phase 3).
+// resolving open question 2, 2026-09-13). The model can never toggle it; an
+// operator can still deny it per agent via the allowlist ([modules] deny).
 internal sealed class DevtoolsModule : IModule
 {
     public ModuleManifest Manifest() => ModuleManifest.Create(
@@ -19,7 +19,8 @@ internal sealed class DevtoolsModule : IModule
         "1.0.0",
         "File management + command execution: run_command, read/write_file, " +
         "list_directory, grep, get_environment_info (names only), move/rename/" +
-        "remove file, make/remove directory, edit_file_inplace.");
+        "remove file, make/remove directory, edit_file_inplace.",
+        modelRequestable: false);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {

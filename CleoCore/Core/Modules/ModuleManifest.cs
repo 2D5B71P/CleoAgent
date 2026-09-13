@@ -25,6 +25,7 @@ internal sealed record ModuleManifest(
         IReadOnlyList<string>? requires = null,
         IReadOnlyList<string>? provides = null,
         string? configSection = null,
+        bool defaultActive = true,
         bool modelRequestable = false)
     {
         return new ModuleManifest(
@@ -34,7 +35,7 @@ internal sealed record ModuleManifest(
             requires ?? new List<string>(),
             provides ?? new List<string>(),
             configSection,
-            true,
+            defaultActive,
             modelRequestable);
     }
 }

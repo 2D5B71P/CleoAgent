@@ -30,5 +30,20 @@ internal sealed class ServiceRegistry
 
     public bool Contains(string name) => _services.ContainsKey(name);
 
+    // Unregisters a service by name; used when a module is deactivated or its
+    // load fails (services registered before a failure are rolled back).
+    // Returns true when the name was present.
+    public bool Unregister(string name)
+    {
+        if (!_services.ContainsKey(name))
+        {
+            return false;
+        }
+
+        _services.Remove(name);
+        _order.Remove(name);
+        return true;
+    }
+
     public IReadOnlyList<string> Names => _order.ToList();
 }

@@ -5,7 +5,9 @@ Status: **Draft v2 (rev 2026-09-13)**. Decisions locked: multi-project solution;
 external modules for agent-built and third-party code (discovered on disk at
 runtime, §7); activation policy = config allowlist + model may enable anything
 allowed (no user approval gate). Open questions (§11) all answered 2026-09-13 —
-see resolutions below.
+see resolutions below. Implemented through Phase 3 (2026-09-13): Phases 1-2
+committed (bd54297, 666b3bc); Phase 3 committed (module allowlist + model-
+requestable logical activation, live-verified).
 
 ---
 
@@ -339,7 +341,7 @@ needed; the live `%APPDATA%\CleoAgent\config.json` keeps working.
 - Exit gate: same as Phase 1, plus `module_status` shows all 5 active and
   definitions equal today's set.
 
-**Phase 3 — Model-requestable activation**
+**Phase 3 ✓ Model-requestable activation (implemented 2026-09-13)**
 - `list_modules`/`module_enable`/`module_disable` fully wired; definitions
   reflect only active modules; allowlist enforced from `[modules]`.
 - Exit gate: live run where the model requests web in-turn and its tools appear

@@ -80,12 +80,52 @@ internal static class CompositionSelfTest
 
             bool allOk = noFailures && allActive && definitionsOk && servicesOk && statusOk && listOk;
 
-            Console.WriteLine(allOk
-                ? "  OK: 5/5 modules active; " + tools.Names.Count + " tool definitions (25 module + 4 kernel); services registered; kernel tools render."
-                : string.Format(
+            if (allOk)
+            {
+                Console.WriteLine("  OK: 5/5 modules active; " + tools.Names.Count + " tool definitions (25 module + 4 kernel); services registered; kernel tools render.");
+            }
+            else
+            {
+                Console.WriteLine(string.Format(
                     "  FAIL: noFailures={0}, allActive={1}, definitionsOk={2} ({3} tools), servicesOk={4}, statusOk={5}, listOk={6} | load failures: {7} | names: {8}",
                     noFailures, allActive, definitionsOk, tools.Names.Count, servicesOk, statusOk, listOk,
                     ListToString(failures), ListToString(tools.Names)));
+            }
+
+            // Phase 3: logical activation through the REAL kernel tools + real
+            // web module. module_disable queues; the module stays active until
+            // ApplyPendingAsync (next-turn boundary); its tools unregister, then
+            // re-register on enable.
+            var disableResult = await tools.ExecuteAsync(
+                new ToolCall("t3", "module_disable", "{\"module_id\":\"web\"}"));
+            bool disableQueued = !disableResult.IsError
+                && disableResult.Output.Contains("NEXT turn")
+                && manager.IsActive("web");   // not yet - next turn
+
+            var appliedFailures = await manager.ApplyPendingAsync();
+            bool toolsGone = appliedFailures.Count == 0
+                && !manager.IsActive("web")
+                && !tools.Names.Contains("web_fetch")
+                && !tools.Names.Contains("web_search");
+
+            var enableResult = await tools.ExecuteAsync(
+                new ToolCall("t4", "module_enable", "{\"module_id\":\"web\"}"));
+            bool enableQueued = !enableResult.IsError
+                && enableResult.Output.Contains("NEXT turn")
+                && !manager.IsActive("web");
+
+            var reappliedFailures = await manager.ApplyPendingAsync();
+            bool toolsBack = reappliedFailures.Count == 0
+                && manager.IsActive("web")
+                && tools.Names.Contains("web_fetch")
+                && tools.Names.Contains("web_search");
+
+            bool phase3Ok = disableQueued && toolsGone && enableQueued && toolsBack;
+            Console.WriteLine(phase3Ok
+                ? "  OK: module_disable/enable queue next-turn; web tools unregister + re-register via real kernel tools."
+                : string.Format(
+                    "  FAIL: phase 3 activation. disableQueued={0}, toolsGone={1}, enableQueued={2}, toolsBack={3} | web active={4} | names: {5}",
+                    disableQueued, toolsGone, enableQueued, toolsBack, manager.IsActive("web"), ListToString(tools.Names)));
         }
         finally
         {

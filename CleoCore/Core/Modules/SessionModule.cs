@@ -27,7 +27,8 @@ internal sealed class SessionModule : IModule
         "session",
         "1.0.0",
         "Session log discovery: list_sessions, search_session_logs, " +
-        "read_session_log, name_session.");
+        "read_session_log, name_session.",
+        modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {

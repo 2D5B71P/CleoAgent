@@ -292,16 +292,21 @@ internal static class Config
     // accessors below re-parse per call: config.json is tiny and read at boot,
     // so caching buys nothing and would risk staleness under test overrides.
 
-    private static string? RawJsonText()
+    private static string? RawJsonText() => RawJsonTextAt(ConfigPath);
+
+    // Reads a config file as comment-stripped JSON text. The per-agent
+    // allowlist narrowing (agents/<id>/config.json) reuses this same parser so
+    // per-agent files get the identical JSON5 + ${ENV} treatment as the host.
+    private static string? RawJsonTextAt(string path)
     {
-        if (!File.Exists(ConfigPath))
+        if (!File.Exists(path))
         {
             return null;
         }
 
         try
         {
-            return StripJsonComments(File.ReadAllText(ConfigPath));
+            return StripJsonComments(File.ReadAllText(path));
         }
         catch
         {
@@ -464,6 +469,53 @@ internal static class Config
             if (value.ValueKind == JsonValueKind.False)
                 return false;
             return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // String-array key under a dotted section path (e.g. "modules" → "allow":
+    // ["*"]). Null when the section/key is absent or not a string array -
+    // callers treat null as "no restriction" (the allowlist default).
+    public static IReadOnlyList<string>? SectionStrings(string sectionPath, string key) =>
+        SectionStringsAt(ConfigPath, sectionPath, key);
+
+    // Same as SectionStrings, but reading an explicit file path (used for the
+    // per-agent allowlist file agents/<id>/config.json). Same parser, same
+    // interpolation, same comment stripping as the host config.
+    public static IReadOnlyList<string>? SectionStringsAt(string path, string sectionPath, string key)
+    {
+        string? valid = RawJsonTextAt(path);
+        if (valid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(valid);
+
+            if (!ResolveSection(document.RootElement, sectionPath, out JsonElement section))
+            {
+                return null;
+            }
+
+            if (!section.TryGetProperty(key, out JsonElement value) || value.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var result = new List<string>();
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    result.Add(item.GetString() ?? "");
+                }
+            }
+            return result;
         }
         catch (JsonException)
         {

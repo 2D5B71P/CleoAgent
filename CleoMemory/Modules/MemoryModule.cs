@@ -32,7 +32,8 @@ internal sealed class MemoryModule : IModule
         "Agent-driven semantic memory: memory_write, memory_retrieve, " +
         "memory_forget, memory_clear (embeddings via the [embedding] config " +
         "section; provider + repository published as services).",
-        configSection: "embedding");
+        configSection: "embedding",
+        modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {

@@ -7,9 +7,9 @@ namespace CleoAgent.Core.Tools.Impl;
 
 // Kernel tool (always on, never unloadable): lists registered modules with
 // their id, version, activity, whether the model may request them, and what
-// they provide. This is how the "model can request a capability" story starts:
+// they provide. This is how the "model can request a capability" story works:
 // the system prompt advertises inactive-but-requestable modules, and the model
-// calls module_enable to activate one (Phase 3 wires the requestable path).
+// calls module_enable to activate one (tools appear next turn).
 internal sealed class ListModulesTool : IAgentTool
 {
     private readonly ModuleManager _manager;
@@ -18,7 +18,8 @@ internal sealed class ListModulesTool : IAgentTool
     public string Description =>
         "Lists this host's capability modules: id, version, active?, whether " +
         "the model may request the module, and what tools/services it " +
-        "provides. Use this to see which capabilities are loaded.";
+        "provides. Use this to see which capabilities are loaded and which " +
+        "dormant ones can be activated with module_enable.";
     public string ParametersJson =>
         """
         {
@@ -51,7 +52,8 @@ internal sealed class ListModulesTool : IAgentTool
             sb.Append("[module] ").AppendLine(status.Id);
             sb.Append("  version:    ").AppendLine(status.Manifest.Version);
             sb.Append("  active:     ").AppendLine(status.Active ? "yes" : "no");
-            sb.Append("  requestable:").AppendLine(status.Manifest.ModelRequestable ? "yes" : "no");
+            sb.Append("  requestable:").AppendLine(status.Requestable ? "yes" : "no");
+            sb.Append("  state:      ").AppendLine(status.Reason);
             sb.Append("  tools:      ").Append(status.ToolCount).AppendLine();
             sb.Append("  requires:   ").AppendLine(Join(status.Manifest.Requires));
             sb.Append("  provides:   ").AppendLine(Join(status.Manifest.Provides));

@@ -30,7 +30,8 @@ internal sealed class WebModule : IModule
         "1.0.0",
         "HTTP fetch + search: web_fetch, web_search (local readability, jina, " +
         "duckduckgo providers via the [web] config section).",
-        configSection: "web");
+        configSection: "web",
+        modelRequestable: true);
 
     public async Task LoadAsync(ModuleContext ctx, CancellationToken cancellationToken = default)
     {
